@@ -1,0 +1,1265 @@
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
+                             QLabel, QPushButton, QFileDialog, QSizePolicy, QComboBox,
+                             QTableWidget, QTableWidgetItem, QHeaderView, QColorDialog)
+from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
+
+class SquareLabel(QLabel):
+    linesMoved = pyqtSignal(float, float) # Signal emitting (start_y, front_y)
+    spotsChanged = pyqtSignal(list) # Signal emitting list of spots data
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(100, 100)
+        self._original_pixmap = None
+        self.setText("No Image Loaded")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("border: 1px solid #ccc; background-color: #f0f0f0;")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.setMouseTracking(True) # Enable mouse tracking for hover effects
+        
+        # Line positions
+        self.start_line_y = 0.9 
+        self.front_line_y = 0.1 
+        self.show_lines = False 
+        
+        # Spot Handling
+        # list of {'sample_id': int, 'x': float, 'y': float}
+        self.spots = [] 
+        self.spot_radius = 8
+        self.adding_sample_mode = False
+        self.current_sample_id = None
+        self.dragged_spot_index = None 
+        self.global_colors = {}
+        
+        # Line Dragging State
+        self.dragged_line = None # "Start" or "Front"
+
+    def set_global_colors(self, colors):
+        self.global_colors = colors
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return width
+
+    def set_add_sample_mode(self, enabled, sample_id=None):
+        self.adding_sample_mode = enabled
+        self.current_sample_id = sample_id
+        if enabled:
+            self.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def set_image(self, pixmap):
+        self._original_pixmap = pixmap
+        self.show_lines = True
+        self.setText("") 
+        self.update_display()
+        self.linesMoved.emit(1.0 - self.start_line_y, 1.0 - self.front_line_y)
+        self.spotsChanged.emit(self.spots)
+        
+    def resizeEvent(self, event):
+        self.update_display()
+        super().resizeEvent(event)
+        
+    def mouseMoveEvent(self, event):
+        if not self.show_lines:
+            return
+
+        x_norm = event.position().x() / self.width()
+        y_norm = event.position().y() / self.height()
+        x_norm = max(0.0, min(1.0, x_norm))
+        y_norm = max(0.0, min(1.0, y_norm))
+        
+        # Cursor feedback for lines
+        if not self.adding_sample_mode and self.dragged_spot_index is None and self.dragged_line is None:
+            start_px = self.start_line_y * self.height()
+            front_px = self.front_line_y * self.height()
+            click_y = event.position().y()
+            
+            if abs(click_y - start_px) < 10 or abs(click_y - front_px) < 10:
+                self.setCursor(Qt.CursorShape.SplitVCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+
+        if self.dragged_spot_index is not None:
+            self.spots[self.dragged_spot_index]['x'] = x_norm
+            self.spots[self.dragged_spot_index]['y'] = y_norm
+            self.update()
+            self.spotsChanged.emit(self.spots)
+            
+        elif self.dragged_line is not None:
+             # Dragging a line
+            if self.dragged_line == "Start":
+                self.start_line_y = y_norm
+            elif self.dragged_line == "Front":
+                self.front_line_y = y_norm
+            self.update() 
+            self.linesMoved.emit(1.0 - self.start_line_y, 1.0 - self.front_line_y)
+
+    def mousePressEvent(self, event):
+        if not self.show_lines:
+            return
+
+        if event.button() == Qt.MouseButton.RightButton:
+            # Right click to remove
+            click_x = event.position().x()
+            click_y = event.position().y()
+            
+            for i, spot in enumerate(self.spots):
+                px = spot['x'] * self.width()
+                py = spot['y'] * self.height()
+                dist = ((click_x - px)**2 + (click_y - py)**2)**0.5
+                if dist < self.spot_radius + 5:
+                    self.spots.pop(i)
+                    self.update()
+                    self.spotsChanged.emit(self.spots)
+                    return
+            return
+
+        x_norm = event.position().x() / self.width()
+        y_norm = event.position().y() / self.height()
+
+        if self.adding_sample_mode:
+            if self.current_sample_id is not None:
+                # Enforce single spot per substance: check if spot exists
+                existing_index = None
+                for i, spot in enumerate(self.spots):
+                    if spot['sample_id'] == self.current_sample_id:
+                        existing_index = i
+                        break
+                
+                if existing_index is not None:
+                    # Update existing spot
+                    self.spots[existing_index]['x'] = x_norm
+                    self.spots[existing_index]['y'] = y_norm
+                else:
+                    # Create new spot
+                    self.spots.append({
+                        'sample_id': self.current_sample_id,
+                        'x': x_norm,
+                        'y': y_norm
+                    })
+                
+                self.update()
+                self.spotsChanged.emit(self.spots)
+        else:
+            # Check for line hit first (priority over general click, but maybe spots priority?)
+            # Let's say Spots > Lines > Background
+            
+            # 1. Spot Hit
+            click_x = event.position().x()
+            click_y = event.position().y()
+            
+            clicked_idx = None
+            closest_dist = float('inf')
+            
+            for i, spot in enumerate(self.spots):
+                px = spot['x'] * self.width()
+                py = spot['y'] * self.height()
+                dist = ((click_x - px)**2 + (click_y - py)**2)**0.5
+                if dist < self.spot_radius + 5:
+                    if dist < closest_dist:
+                        closest_dist = dist
+                        clicked_idx = i
+            
+            if clicked_idx is not None:
+                self.dragged_spot_index = clicked_idx
+            else:
+                 # 2. Line Hit
+                start_px = self.start_line_y * self.height()
+                front_px = self.front_line_y * self.height()
+                
+                if abs(click_y - start_px) < 10:
+                    self.dragged_line = "Start"
+                    self.setCursor(Qt.CursorShape.SplitVCursor)
+                    return
+                elif abs(click_y - front_px) < 10:
+                    self.dragged_line = "Front"
+                    self.setCursor(Qt.CursorShape.SplitVCursor)
+                    return
+
+    def mouseReleaseEvent(self, event):
+        self.dragged_spot_index = None
+        self.dragged_line = None
+        if not self.adding_sample_mode:
+             self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.show_lines:
+            painter = QPainter(self)
+            
+            # Draw Lines
+            painter.setPen(QPen(QColor("green"), 2))
+            start_y = int(self.start_line_y * self.height())
+            painter.drawLine(0, start_y, self.width(), start_y)
+            
+            painter.setPen(QPen(QColor("red"), 2))
+            front_y = int(self.front_line_y * self.height())
+            painter.drawLine(0, front_y, self.width(), front_y)
+            
+            # Draw Spots
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            for spot in self.spots:
+                sid = spot['sample_id']
+                color = self.global_colors.get(sid, QColor("black"))
+                painter.setPen(QPen(color, 2))
+                
+                px = int(spot['x'] * self.width())
+                py = int(spot['y'] * self.height())
+                painter.drawEllipse(px - self.spot_radius, py - self.spot_radius, 
+                                    self.spot_radius * 2, self.spot_radius * 2)
+
+    def update_display(self):
+        if self._original_pixmap and not self._original_pixmap.isNull():
+            scaled = self._original_pixmap.scaled(
+                self.size(), 
+                Qt.AspectRatioMode.KeepAspectRatio, 
+                Qt.TransformationMode.SmoothTransformation
+            )
+            super().setPixmap(scaled)
+        elif self.text() == "":
+             self.setText("No Image Loaded")
+
+class ImageSlot(QWidget):
+    def __init__(self, title):
+        super().__init__()
+        self.image_path = None # Store loaded image path
+        self.layout = QVBoxLayout()
+        self.layout.setSpacing(2)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(self.layout)
+        
+        # Coordinate Display (Lines)
+        self.coord_layout = QHBoxLayout()
+        self.start_coord_label = QLabel("Start: -")
+        self.start_coord_label.setStyleSheet("color: green; font-weight: bold;")
+        self.front_coord_label = QLabel("Front: -")
+        self.front_coord_label.setStyleSheet("color: red; font-weight: bold;")
+        
+        self.coord_layout.addWidget(self.start_coord_label)
+        self.coord_layout.addStretch()
+        self.coord_layout.addWidget(self.front_coord_label)
+        self.layout.addLayout(self.coord_layout)
+        
+        # Title
+        self.title_label = QLabel(title)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        font = self.title_label.font()
+        font.setPointSize(14)
+        font.setBold(True)
+        self.title_label.setFont(font)
+        self.layout.addWidget(self.title_label)
+        
+        # Image Area
+        self.image_label = SquareLabel()
+        self.image_label.linesMoved.connect(self.update_coords)
+        self.layout.addWidget(self.image_label)
+        
+        # Controls
+        controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.addLayout(controls_layout)
+
+        # Load Button
+        self.load_button = QPushButton("Load Image")
+        self.load_button.clicked.connect(self.load_image)
+        controls_layout.addWidget(self.load_button)
+        
+        # Export Button
+        self.export_button = QPushButton("Export Image")
+        self.export_button.clicked.connect(self.export_marked_image)
+        controls_layout.addWidget(self.export_button)
+        
+    def load_image(self):
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "Open Image", "", "Images (*.png *.xpm *.jpg *.jpeg *.bmp *.tif *.tiff)"
+        )
+        if file_name:
+            self.image_path = file_name
+            pixmap = QPixmap(file_name)
+            if not pixmap.isNull():
+                self.image_label.set_image(pixmap)
+
+    def export_marked_image(self):
+        if not self.image_path or not self.image_label._original_pixmap:
+            return
+            
+        file_name, _ = QFileDialog.getSaveFileName(
+            self, "Export Marked Image", "", "PNG Images (*.png);;JPEG Images (*.jpg)"
+        )
+        if not file_name:
+            return
+            
+        # Create a mutable copy of the original pixmap
+        export_pixmap = self.image_label._original_pixmap.copy()
+        
+        painter = QPainter(export_pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Dimensions of original image
+        w = export_pixmap.width()
+        h = export_pixmap.height()
+        
+        # Scale for drawing elements (assume 800px is standard view for relative sizing)
+        scale_factor = max(1.0, w / 800.0)
+        line_width = int(4 * scale_factor)
+        spot_radius = int(self.image_label.spot_radius * scale_factor)
+        spot_pen_width = int(2 * scale_factor)
+        
+        # Draw Start Line (Green)
+        start_y = int(self.image_label.start_line_y * h)
+        pen = QPen(QColor("green"), line_width)
+        painter.setPen(pen)
+        painter.drawLine(0, start_y, w, start_y)
+        
+        # Draw Front Line (Red)
+        front_y = int(self.image_label.front_line_y * h)
+        pen = QPen(QColor("red"), line_width)
+        painter.setPen(pen)
+        painter.drawLine(0, front_y, w, front_y)
+        
+        # Draw Spots
+        spots = self.image_label.spots
+        colors = self.image_label.global_colors
+        
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        
+        for spot in spots:
+            sid = spot['sample_id']
+            color = colors.get(sid, QColor("black"))
+            painter.setPen(QPen(color, spot_pen_width))
+            
+            px = int(spot['x'] * w)
+            py = int(spot['y'] * h)
+            
+            painter.drawEllipse(px - spot_radius, py - spot_radius, spot_radius * 2, spot_radius * 2)
+            
+        painter.end()
+        
+        export_pixmap.save(file_name)
+    
+    def update_coords(self, start_y, front_y):
+        self.start_coord_label.setText(f"Start: {start_y:.3f}")
+        self.front_coord_label.setText(f"Front: {front_y:.3f}")
+
+class MainWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("TLC Analysis")
+        self.resize(1200, 700) 
+        
+        # State
+        self.samples = {} # {id: {'color': QColor, 'name': str}}
+        self.next_sample_id = 1
+        self.colors = [
+            QColor("cyan"), QColor("magenta"), QColor("yellow"), 
+            QColor("blue"), QColor("orange"), QColor("purple"), 
+            QColor("lime"), QColor("pink")
+        ]
+        
+        self.reference_data = [] # Cache for prediction
+        self.load_reference_data() # Load DB data on startup
+        
+        # Standards configuration (Values / 100.0)
+        # ID 0: Atranorin
+        self.atranorin_standards = {
+            0: 0.76, # A
+            1: 0.73, # Bprime
+            2: 0.79  # C
+        }
+        # ID -1: Norstictic Acid (A=40, B=32, C=30)
+        self.norstictic_standards = {
+            0: 0.40, # A
+            1: 0.32, # Bprime
+            2: 0.30  # C
+        }
+
+        
+        # Main Layout Construction
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        
+        main_layout = QVBoxLayout()
+        main_widget.setLayout(main_layout)
+
+        # Toolbar Area
+        toolbar_layout = QHBoxLayout()
+        
+        self.mark_substance_button = QPushButton("Mark Substance")
+        self.mark_substance_button.setCheckable(True)
+        self.mark_substance_button.clicked.connect(self.toggle_mark_substance)
+        toolbar_layout.addWidget(self.mark_substance_button)
+        
+        self.mark_atranorin_button = QPushButton("Mark Atranorin")
+        self.mark_atranorin_button.setCheckable(True)
+        self.mark_atranorin_button.clicked.connect(self.toggle_mark_atranorin)
+        toolbar_layout.addWidget(self.mark_atranorin_button)
+        
+        self.mark_norstictic_button = QPushButton("Mark Norstictic")
+        self.mark_norstictic_button.setCheckable(True)
+        self.mark_norstictic_button.clicked.connect(self.toggle_mark_norstictic)
+        toolbar_layout.addWidget(self.mark_norstictic_button)
+        
+        toolbar_layout.addStretch()
+        main_layout.addLayout(toolbar_layout)
+
+        # Slots Area
+        slots_layout = QHBoxLayout()
+        self.slots = []
+        self.plate_labels = ['A', 'Bprime', 'C']
+        for label in self.plate_labels:
+            slot = ImageSlot(label)
+            # Connect spot changes to aggregation logic
+            slot.image_label.spotsChanged.connect(self.update_results_display)
+            # Also connect line moves to aggregation logic
+            slot.image_label.linesMoved.connect(lambda s, f: self.update_results_display())
+            self.slots.append(slot)
+            slots_layout.addWidget(slot)
+        main_layout.addLayout(slots_layout)
+        
+        # Results Display
+        # Results Display using QTableWidget
+        self.results_table = QTableWidget()
+        self.results_table.setColumnCount(6)
+        self.results_table.setHorizontalHeaderLabels(["Color", "Substance", "Plate A", "Plate B'", "Plate C", "Predictions"])
+        
+        # Column Resizing Logic
+        header = self.results_table.horizontalHeader()
+        
+        # 0: Color (Fixed, Small)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.results_table.setColumnWidth(0, 50)
+        
+        # 1: Substance (Interactive/Stretch?) - Let's use Interactive defaults but set width
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.results_table.setColumnWidth(1, 150)
+        
+        # 2, 3, 4: Plates (Fixed, Small - ~1/5 of typical width)
+        for i in [2, 3, 4]:
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
+            self.results_table.setColumnWidth(i, 60)
+            
+        # 5: Predictions (Interactive, allow scrolling)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
+        self.results_table.setColumnWidth(5, 400)
+        
+        # Ensure horizontal scrolling is possible
+        self.results_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
+        # Row Height
+        # Connect Cell Click
+        self.results_table.cellClicked.connect(self.handle_table_click)
+        
+        main_layout.addWidget(self.results_table)
+
+        self.create_menu()
+
+    def handle_table_click(self, row, col):
+        if col == 0:
+            # Color Column Clicked
+            item = self.results_table.item(row, col)
+            if item:
+                sid = item.data(Qt.ItemDataRole.UserRole)
+                if sid is not None:
+                     self.change_sample_color(sid)
+
+    def change_sample_color(self, sid):
+        if sid not in self.samples:
+            return
+            
+        current_color = self.samples[sid]['color']
+        new_color = QColorDialog.getColor(current_color, self, "Select Spot Color")
+        
+        if new_color.isValid():
+            self.samples[sid]['color'] = new_color
+            
+            # Update Slots
+            colors = {s: d['color'] for s, d in self.samples.items()}
+            # Update standard references if needed? 
+            # Standards map to 0 and -1 which reuse these colors if they are in samples.
+            
+            for slot in self.slots:
+                slot.image_label.set_global_colors(colors)
+                slot.image_label.update()
+                
+            self.update_results_display()
+
+    def update_results_display(self):
+        # Aggregate data from all slots
+        # Map: Sample ID -> { Plate Index -> [rf1, rf2, ...] }
+        aggregated = {}
+        
+        for i, slot in enumerate(self.slots):
+            # ... (calculation of rf_val) ...
+            
+            # Get Start and Front lines (raw normalized coords: 0=Top, 1=Bottom)
+            # Invert them for logical calculation (0=Bottom, 1=Top)
+            raw_start = slot.image_label.start_line_y
+            raw_front = slot.image_label.front_line_y
+            
+            u_start = 1.0 - raw_start
+            u_front = 1.0 - raw_front
+            
+            denom = u_front - u_start
+            
+            spots = slot.image_label.spots # list of dicts
+            for spot in spots:
+                sid = spot['sample_id']
+                raw_y = spot['y']
+                u_spot = 1.0 - raw_y
+                
+                # Calculate Rf
+                if abs(denom) < 1e-6:
+                    rf_val = 0.0 # Avoid div by zero
+                else:
+                    rf_val = (u_spot - u_start) / denom
+                
+                if sid not in aggregated:
+                    aggregated[sid] = {}
+                if i not in aggregated[sid]:
+                    aggregated[sid][i] = []
+                aggregated[sid][i].append(rf_val)
+        
+        # Check for auto-stop (omitted here, preserved in actual file)
+        # Check for auto-stop
+        if self.mark_substance_button.isChecked():
+            current_sid = self.next_sample_id - 1
+            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
+                self.mark_substance_button.click()
+        elif self.mark_atranorin_button.isChecked():
+            current_sid = 0 # Atranorin ID
+            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
+                self.mark_atranorin_button.click()
+        elif self.mark_norstictic_button.isChecked():
+            current_sid = -1 # Norstictic ID
+            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
+                self.mark_norstictic_button.click()
+
+        # Calibration Logic
+        # Gather Active Standards per Plate
+        # active_standards[plate_idx] = [(obs_rf, std_rf), ...]
+        active_standards = {0: [], 1: [], 2: []}
+        
+        # Check Atranorin (0)
+        if 0 in aggregated:
+             for idx, vals in aggregated[0].items():
+                 if vals and idx in self.atranorin_standards:
+                     active_standards[idx].append((vals[0], self.atranorin_standards[idx]))
+                     
+        # Check Norstictic (-1)
+        if -1 in aggregated:
+             for idx, vals in aggregated[-1].items():
+                 if vals and idx in self.norstictic_standards:
+                     active_standards[idx].append((vals[0], self.norstictic_standards[idx]))
+
+        for idx in active_standards:
+            active_standards[idx].sort(key=lambda x: x[0])
+
+        # Render
+        lines = []
+        # Sort by Sample ID
+        sorted_ids = sorted(aggregated.keys())
+        
+        for sid in sorted_ids:
+            if sid not in self.samples:
+                continue 
+                
+            color = self.samples[sid]['color']
+            hex_c = color.name()
+            
+            parts = []
+            plate_data = aggregated[sid]
+            prediction_input = {}
+            
+            for plate_idx, label in enumerate(self.plate_labels):
+                
+                if plate_idx in plate_data:
+                    raw_val = plate_data[plate_idx][0]
+                    corrected_val = raw_val
+                    
+                    # Apply Piecewise Calibration
+                    # Find next reference spot ABOVE (obs > raw_val) (Wait: user said "next reference spot above it (with higher values)")
+                    # Valid refs are those with ref_obs > raw_val.
+                    # "Next" means smallest of those (closest above).
+                    # If multiple references: use the closest one above.
+                    
+                    standards = active_standards.get(plate_idx, [])
+                    upper_ref = None
+                    for ref_obs, ref_std in standards:
+                        if ref_obs > raw_val:
+                            upper_ref = (ref_obs, ref_std)
+                            break # Since sorted, first one we meet > raw_val is the closest above
+                    
+                    # Logic: "Every newly marked spot should use the next reference spot above it...
+                    # If no reference is given (above), the front line value should be used."
+                    
+                    if upper_ref:
+                        ref_obs, ref_std = upper_ref
+                        # Correction: scale using that reference
+                        # Factor = Ref_Std / Ref_Obs
+                        if ref_obs > 1e-6:
+                             factor = ref_std / ref_obs
+                             corrected_val = raw_val * factor
+                    else:
+                        # No reference above. Use Front Line.
+                        # Front line Obs=1.0, Std=1.0. Factor = 1.0.
+                        corrected_val = raw_val
+                    
+                    prediction_input[plate_idx] = corrected_val
+                    vals = f"{corrected_val:.2f}"
+                    
+                    parts.append(f"<b>{label}</b>[{vals}]")
+                else:
+                    parts.append(f"<b>{label}</b>[-]")
+            
+            # Predict matches
+            matches = []
+            # Don't predict for Refs (IDs <= 0)
+            if sid > 0 and prediction_input:
+                current_filter = self.samples[sid].get('filter_group')
+                matches = self.predict_matches(prediction_input, filter_group=current_filter)
+            
+            # Format Name as Link
+            if sid > 0:
+                 name_html = f"<a href='edit_sample:{sid}' style='color:{hex_c}; text-decoration:none;'><b>{self.samples[sid]['name']}</b></a>"
+            else:
+                 name_html = f"<b>{self.samples[sid]['name']}</b>"
+            
+            line_str = f"<span style='color:{hex_c};'>{name_html}: " + " | ".join(parts)
+            
+            if matches:
+                 match_links = []
+                 for m in matches:
+                     match_links.append(f"<a href='substance:{m}'>{m}</a>")
+                 match_str = ", ".join(match_links)
+                 line_str += f" -> ({match_str})"
+            
+            if sid > 0 and self.samples[sid].get('filter_group'):
+                line_str += f" <small style='color:gray'>[Filter: {self.samples[sid].get('filter_group')}]</small>"
+                 
+            line_str += "</span>"
+            lines.append(line_str)
+        
+        self.results_label.setText("<br>".join(lines))
+        
+
+        
+    def create_menu(self):
+        menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu("File")
+        
+        load_examples_action = QAction("Load Examples", self)
+        load_examples_action.triggered.connect(self.load_examples)
+        file_menu.addAction(load_examples_action)
+        
+        save_analysis_action = QAction("Save Analysis", self)
+        save_analysis_action.triggered.connect(self.save_analysis)
+        file_menu.addAction(save_analysis_action)
+
+        load_analysis_action = QAction("Load Analysis", self)
+        load_analysis_action.triggered.connect(self.load_analysis)
+        file_menu.addAction(load_analysis_action)
+        
+        new_analysis_action = QAction("New Analysis", self)
+        new_analysis_action.triggered.connect(self.new_analysis)
+        file_menu.addAction(new_analysis_action)
+
+        # Reference Menu
+        ref_menu = menu_bar.addMenu("Reference")
+        
+        tables = ["Lichens", "LichensBackup", "Substances", "SubstancesBackup"]
+        for table in tables:
+            action = QAction(table, self)
+            # Use default arg to capture loop variable
+            action.triggered.connect(lambda checked, t=table: self.show_table(t))
+            ref_menu.addAction(action)
+
+    def show_table(self, table_name):
+        from gui.database_window import DatabaseTableWindow
+        
+        # Store windows in a dict to prevent GC and allow multiple open
+        if not hasattr(self, 'table_windows'):
+            self.table_windows = {}
+            
+        # Create logic: bring to front if open, else create
+        if table_name not in self.table_windows or self.table_windows[table_name] is None:
+             import os
+             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+             db_path = os.path.join(base_path, "Mytabolites.db")
+             self.table_windows[table_name] = DatabaseTableWindow(table_name, db_path)
+        
+        window = self.table_windows[table_name]
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def handle_link_click(self, link):
+        if link.startswith("substance:"):
+            name = link.split(":", 1)[1]
+            from gui.substance_detail_window import SubstanceDetailWindow
+            from PyQt6.QtSql import QSqlDatabase
+            
+            # Ensure DB connection exists (should be established by load_reference_data or show_table)
+            # Check default connection
+            if not QSqlDatabase.contains("qt_sql_default_connection"):
+                # Re-establish if missing (reuse logic?)
+                import os
+                base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                db_path = os.path.join(base_path, "Mytabolites.db")
+                db = QSqlDatabase.addDatabase("QSQLITE")
+                db.setDatabaseName(db_path)
+                if not db.open():
+                    print("Error: Could not open database")
+                    return
+            else:
+                db = QSqlDatabase.database()
+            
+
+            
+            # Manage window instance to prevent GC
+            if not hasattr(self, 'detail_windows'):
+                self.detail_windows = {}
+            
+            # Close existing if same? Or allow multiple?
+            # Let's allow multiple distinct, bring to front if same
+            if name in self.detail_windows and self.detail_windows[name].isVisible():
+                self.detail_windows[name].raise_()
+                self.detail_windows[name].activateWindow()
+                return
+                
+            window = SubstanceDetailWindow(name, db)
+            self.detail_windows[name] = window
+            window.show()
+
+        elif link.startswith("edit_sample:"):
+            sid = int(link.split(":", 1)[1])
+            self.open_characteristics_window(sid)
+
+    def open_characteristics_window(self, sid):
+        if sid not in self.samples:
+            return
+            
+        from gui.substance_characteristics_window import SubstanceCharacteristicsWindow
+        from PyQt6.QtSql import QSqlDatabase
+        
+        # Ensure DB connection
+        if QSqlDatabase.contains("qt_sql_default_connection"):
+            db = QSqlDatabase.database()
+        else:
+             # Fallback if somehow missing
+             import os
+             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+             db_path = os.path.join(base_path, "Mytabolites.db")
+             db = QSqlDatabase.addDatabase("QSQLITE")
+             db.setDatabaseName(db_path)
+             if not db.open(): return
+
+        # Manage window
+        if not hasattr(self, 'char_windows'):
+             self.char_windows = {}
+             
+        sample_name = self.samples[sid]['name']
+        current_group = self.samples[sid].get('filter_group')
+        current_genus = self.samples[sid].get('filter_genus')
+        
+        # Unique key? sid is unique.
+        if sid in self.char_windows and self.char_windows[sid].isVisible():
+            self.char_windows[sid].raise_()
+            self.char_windows[sid].activateWindow()
+            return
+
+        window = SubstanceCharacteristicsWindow(sid, sample_name, current_group, current_genus, db)
+        window.filterChanged.connect(self.set_sample_filter)
+        self.char_windows[sid] = window
+        window.show()
+
+    def set_sample_filter(self, sid, group_name, genus):
+        if sid in self.samples:
+            self.samples[sid]['filter_group'] = group_name
+            self.samples[sid]['filter_genus'] = genus
+            self.update_results_display()
+
+    def ensure_single_mode(self, active_btn):
+        # Helper to uncheck other buttons
+        buttons = [self.mark_substance_button, self.mark_atranorin_button, self.mark_norstictic_button]
+        for btn in buttons:
+            if btn != active_btn and btn.isChecked():
+                btn.click() # This triggers its toggle handler to clean up
+
+    def activate_marking_mode(self, sid, color, name):
+        if sid not in self.samples:
+             self.samples[sid] = {'color': color, 'name': name}
+        
+        color_map = {k: v['color'] for k, v in self.samples.items()}
+        for slot in self.slots:
+            slot.image_label.set_global_colors(color_map)
+            slot.image_label.set_add_sample_mode(True, sid)
+
+    def deactivate_marking_mode(self):
+        for slot in self.slots:
+            slot.image_label.set_add_sample_mode(False)
+
+    def toggle_mark_substance(self, checked):
+        if checked:
+            self.ensure_single_mode(self.mark_substance_button)
+                
+            # Entering Add Mode
+            self.mark_substance_button.setText("Stop Marking")
+            sid = self.next_sample_id
+            self.next_sample_id += 1
+            color = self.colors[(sid - 1) % len(self.colors)]
+            self.activate_marking_mode(sid, color, f"Substance {sid}")
+        else:
+            self.mark_substance_button.setText("Mark Substance")
+            self.deactivate_marking_mode()
+
+    def toggle_mark_atranorin(self, checked):
+        if checked:
+            self.ensure_single_mode(self.mark_atranorin_button)
+            
+            # Atranorin Mode (ID 0)
+            self.mark_atranorin_button.setText("Stop Ref (Atr)")
+            self.activate_marking_mode(0, QColor("white"), "Atranorin (Ref)")
+        else:
+            self.mark_atranorin_button.setText("Mark Atranorin")
+            self.deactivate_marking_mode()
+
+    def toggle_mark_norstictic(self, checked):
+        if checked:
+            self.ensure_single_mode(self.mark_norstictic_button)
+            
+            # Norstictic Mode (ID -1)
+            self.mark_norstictic_button.setText("Stop Ref (Nor)")
+            self.activate_marking_mode(-1, QColor("cyan"), "Norstictic Acid (Ref)")
+        else:
+            self.mark_norstictic_button.setText("Mark Norstictic")
+            self.deactivate_marking_mode()
+    
+    def update_results_display(self):
+        # Aggregate data from all slots
+        # Map: Sample ID -> { Plate Index -> [rf1, rf2, ...] }
+        aggregated = {}
+        
+        for i, slot in enumerate(self.slots):
+            # Get Start and Front lines (raw normalized coords: 0=Top, 1=Bottom)
+            # Invert them for logical calculation (0=Bottom, 1=Top)
+            raw_start = slot.image_label.start_line_y
+            raw_front = slot.image_label.front_line_y
+            
+            u_start = 1.0 - raw_start
+            u_front = 1.0 - raw_front
+            
+            denom = u_front - u_start
+            
+            spots = slot.image_label.spots # list of dicts
+            for spot in spots:
+                sid = spot['sample_id']
+                raw_y = spot['y']
+                u_spot = 1.0 - raw_y
+                
+                # Calculate Rf
+                if abs(denom) < 1e-6:
+                    rf_val = 0.0 # Avoid div by zero
+                else:
+                    rf_val = (u_spot - u_start) / denom
+                
+                if sid not in aggregated:
+                    aggregated[sid] = {}
+                if i not in aggregated[sid]:
+                    aggregated[sid][i] = []
+                aggregated[sid][i].append(rf_val)
+        
+        # Check for auto-stop if currently marking
+        if self.mark_substance_button.isChecked():
+            current_sid = self.next_sample_id - 1
+            # Check if this sample has entries for all 3 plates (indices 0, 1, 2)
+            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
+                self.mark_substance_button.click()
+        elif self.mark_atranorin_button.isChecked():
+            current_sid = 0 # Atranorin ID
+            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
+                self.mark_atranorin_button.click()
+
+        # Calibration Logic
+        # Gather Active Standards per Plate
+        active_standards = {0: [], 1: [], 2: []}
+        
+        # Check Atranorin (0)
+        if 0 in aggregated:
+             for idx, vals in aggregated[0].items():
+                 if vals and idx in self.atranorin_standards:
+                     active_standards[idx].append((vals[0], self.atranorin_standards[idx]))
+                     
+        # Check Norstictic (-1)
+        if -1 in aggregated:
+             for idx, vals in aggregated[-1].items():
+                 if vals and idx in self.norstictic_standards:
+                     active_standards[idx].append((vals[0], self.norstictic_standards[idx]))
+
+        for idx in active_standards:
+            active_standards[idx].sort(key=lambda x: x[0])
+
+        # Store Scroll Position
+        v_scroll = self.results_table.verticalScrollBar().value()
+        h_scroll = self.results_table.horizontalScrollBar().value()
+
+        # Render to Table
+        self.results_table.setRowCount(0)
+        sorted_ids = sorted(aggregated.keys())
+        
+        for sid in sorted_ids:
+            if sid not in self.samples:
+                continue 
+                
+            color = self.samples[sid]['color']
+            
+            # Prepare row data
+            current_row = self.results_table.rowCount()
+            self.results_table.insertRow(current_row)
+            
+            # 1. Color Column
+            color_item = QTableWidgetItem()
+            color_item.setBackground(color)
+            color_item.setData(Qt.ItemDataRole.UserRole, sid) # Store SID
+            color_item.setFlags(Qt.ItemFlag.NoItemFlags) # Non-editable/selectable
+            self.results_table.setItem(current_row, 0, color_item)
+            
+            # 2. Substance Name (Clickable Link)
+            name_label = QLabel()
+            name_text = self.samples[sid]['name']
+            hex_c = color.name()
+            # Link style
+            name_label.setText(f"<a href='edit_sample:{sid}' style='color:white; text-decoration:none;'><b>{name_text}</b></a>")
+            name_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+            name_label.linkActivated.connect(self.handle_link_click)
+            name_label.setContentsMargins(5, 0, 5, 0)
+            self.results_table.setCellWidget(current_row, 1, name_label)
+
+            # Columns for A, B, C
+            plate_data = aggregated[sid]
+            prediction_input = {}
+            current_filter = None
+            
+            for plate_idx, label in enumerate(self.plate_labels):
+                col_idx = 2 + plate_idx
+                
+                val_str = "-"
+                if plate_idx in plate_data:
+                    raw_val = plate_data[plate_idx][0]
+                    corrected_val = raw_val
+                    
+                    # Apply Piecewise Calibration
+                    standards = active_standards.get(plate_idx, [])
+                    upper_ref = None
+                    for ref_obs, ref_std in standards:
+                        if ref_obs > raw_val:
+                            upper_ref = (ref_obs, ref_std)
+                            break
+                    
+                    if upper_ref:
+                        ref_obs, ref_std = upper_ref
+                        if ref_obs > 1e-6:
+                             factor = ref_std / ref_obs
+                             corrected_val = raw_val * factor
+                    
+                    prediction_input[plate_idx] = corrected_val
+                    val_str = f"{corrected_val:.2f}"
+                
+                item = QTableWidgetItem(val_str)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.results_table.setItem(current_row, col_idx, item)
+            
+            # 3. Predictions
+            matches = []
+            if sid > 0 and prediction_input:
+                current_filter = self.samples[sid].get('filter_group')
+                current_genus = self.samples[sid].get('filter_genus')
+                matches = self.predict_matches(prediction_input, filter_group=current_filter, filter_genus=current_genus)
+            
+            pred_label = QLabel()
+            if matches:
+                 match_links = []
+                 for m in matches:
+                     match_links.append(f"<a href='substance:{m}'>{m}</a>")
+                 match_str = ", ".join(match_links)
+                 
+                 if current_filter:
+                     match_str += f" <small style='color:gray'>[{current_filter}]</small>"
+                     
+                 pred_label.setText(match_str)
+                 pred_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+                 pred_label.linkActivated.connect(self.handle_link_click)
+            else:
+                pred_label.setText("-")
+                
+            pred_label.setContentsMargins(5, 0, 5, 0)
+            self.results_table.setCellWidget(current_row, 5, pred_label)
+            
+        # Restore Scroll Position
+        self.results_table.verticalScrollBar().setValue(v_scroll)
+        self.results_table.horizontalScrollBar().setValue(h_scroll)
+            
+    def load_examples(self):
+        import os
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        root_path = os.path.dirname(base_path)
+        examples_dir = os.path.join(root_path, "examples")
+        example_files = ["A.png", "B.png", "C.png"]
+        
+        for i, filename in enumerate(example_files):
+            if i < len(self.slots):
+                full_path = os.path.join(examples_dir, filename)
+                if os.path.exists(full_path):
+                    self.slots[i].image_path = full_path # Store path
+                    pixmap = QPixmap(full_path)
+                    if not pixmap.isNull():
+                        self.slots[i].image_label.set_image(pixmap)
+
+    def save_analysis(self):
+        import json
+        file_name, _ = QFileDialog.getSaveFileName(
+            self, "Save Analysis", "", "JSON Files (*.json)"
+        )
+        if not file_name:
+            return
+            
+        data = {
+            "samples": {},
+            "plates": []
+        }
+        
+        # Save Samples (only need ID and name, color can be deterministic)
+        for sid, sdata in self.samples.items():
+            data["samples"][sid] = {"name": sdata["name"]}
+            
+        # Save Plates
+        for i, slot in enumerate(self.slots):
+            plate_data = {
+                "id": i,
+                "image_path": slot.image_path,
+                "start_line_y": slot.image_label.start_line_y,
+                "front_line_y": slot.image_label.front_line_y,
+                "spots": slot.image_label.spots
+            }
+            data["plates"].append(plate_data)
+            
+        try:
+            with open(file_name, 'w') as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"Error saving file: {e}")
+
+    def load_analysis(self):
+        import json
+        import os
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "Load Analysis", "", "JSON Files (*.json)"
+        )
+        if not file_name:
+            return
+            
+        try:
+            with open(file_name, 'r') as f:
+                data = json.load(f)
+            
+            # Reset State
+            self.samples = {} # Clear samples
+            # Determine next sample id (max id + 1)
+            max_sid = 0
+            
+            # Restore Samples
+            for sid_str, sdata in data.get("samples", {}).items():
+                sid = int(sid_str)
+                if sid > max_sid:
+                    max_sid = sid
+                color = self.colors[(sid - 1) % len(self.colors)]
+                self.samples[sid] = {'color': color, 'name': sdata['name']}
+            
+            self.next_sample_id = max_sid + 1
+            
+            # Update Slots
+            plates_data = data.get("plates", [])
+            for plate_info in plates_data:
+                idx = plate_info.get("id")
+                if idx is not None and 0 <= idx < len(self.slots):
+                    slot = self.slots[idx]
+                    path = plate_info.get("image_path")
+                    start_y = plate_info.get("start_line_y", 0.9)
+                    front_y = plate_info.get("front_line_y", 0.1)
+                    spots = plate_info.get("spots", [])
+                    
+                    if path and os.path.exists(path):
+                        slot.image_path = path
+                        pixmap = QPixmap(path)
+                        if not pixmap.isNull():
+                            slot.image_label.set_image(pixmap)
+                    
+                    # Set Lines
+                    slot.image_label.start_line_y = start_y
+                    slot.image_label.front_line_y = front_y
+                    
+                    # Set Spots
+                    # Ensure spots have integer sample_id as saved
+                    safe_spots = []
+                    for s in spots:
+                        safe_spots.append({
+                            'sample_id': int(s['sample_id']),
+                            'x': s['x'],
+                            'y': s['y']
+                        })
+                    slot.image_label.spots = safe_spots
+                    
+                    # Trigger updates
+                    slot.image_label.update()
+                    slot.image_label.linesMoved.emit(1.0 - start_y, 1.0 - front_y)
+            
+            # Global Updates
+            color_map = {k: v['color'] for k, v in self.samples.items()}
+            for slot in self.slots:
+                slot.image_label.set_global_colors(color_map)
+                # Ensure spot display is updated
+                slot.image_label.spotsChanged.emit(slot.image_label.spots)
+                
+            self.update_results_display()
+            
+        except Exception as e:
+            print(f"Error loading file: {e}")
+
+    def new_analysis(self):
+        # Reset Global State
+        self.samples = {}
+        self.next_sample_id = 1
+        
+        # Reset Controls
+        if self.mark_substance_button.isChecked():
+            self.mark_substance_button.click() # This will toggle it off and reset cursors
+            
+        # Reset Slots
+        for slot in self.slots:
+            slot.image_path = None
+            slot.image_label._original_pixmap = None
+            slot.image_label.setText("No Image Loaded")
+            slot.image_label.setPixmap(QPixmap()) # Clear displayed pixmap
+            slot.image_label.spots = []
+            slot.image_label.start_line_y = 0.9
+            slot.image_label.front_line_y = 0.1
+            slot.image_label.show_lines = False
+            slot.image_label.set_global_colors({})
+            slot.update_coords(0.9, 0.1) # Reset coord labels manually or via signal? 
+            # Signal won't fire if lines aren't moved/set via setter that emits.
+            # Let's forcefully emit or set text.
+            slot.image_label.linesMoved.emit(0.1, 0.9) # Inverted: 1-0.9=0.1 start, 1-0.1=0.9 front
+            slot.image_label.spotsChanged.emit([])
+            slot.image_label.update()
+            
+        self.update_results_display()
+        
+    def load_reference_data(self):
+        self.reference_data = []
+        import os
+        from PyQt6.QtSql import QSqlDatabase, QSqlQuery
+        
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        db_path = os.path.join(base_path, "Mytabolites.db")
+        
+        if QSqlDatabase.contains("main_ref_connection"):
+            db = QSqlDatabase.database("main_ref_connection")
+        else:
+            db = QSqlDatabase.addDatabase("QSQLITE", "main_ref_connection")
+            db.setDatabaseName(db_path)
+            
+        if db.open():
+            tables = ["Substances", "SubstancesBackup"]
+            for table in tables:
+                query = QSqlQuery(db)
+                # Select name, A, Bprime, C, GroupName AND Lichens
+                if query.exec(f"SELECT name, A, Bprime, C, GroupName, Lichens FROM {table}"):
+                    while query.next():
+                        name = query.value(0)
+                        
+                        def parse_rf(val):
+                            if val is None or val == "":
+                                return None
+                            try:
+                                return float(val) / 100.0
+                            except:
+                                return None
+                                
+                        rf_a = parse_rf(query.value(1))
+                        rf_b = parse_rf(query.value(2))
+                        rf_c = parse_rf(query.value(3))
+                        group_name = query.value(4)
+                        lichens_str = query.value(5)
+                        
+                        # Parse Genus (First word of Lichens)
+                        genus = None
+                        if lichens_str:
+                            parts = lichens_str.strip().split()
+                            if parts:
+                                genus = parts[0]
+                        
+                        self.reference_data.append({
+                            'name': name,
+                            'rf': [rf_a, rf_b, rf_c], # Matching slots 0, 1, 2
+                            'GroupName': group_name,
+                            'Genus': genus
+                        })
+            db.close()
+        
+    def predict_matches(self, input_data, filter_group=None, filter_genus=None):
+        # input_data: {plate_idx: value}
+        # Returns list of top names
+        
+        scores = []
+        
+        for item in self.reference_data:
+            name = item['name']
+            
+            # Filter by Group
+            if filter_group and item.get('GroupName') != filter_group:
+                continue
+                
+            # Filter by Genus
+            if filter_genus and item.get('Genus') != filter_genus:
+                continue
+
+            # Calculate Distance
+            dist = 0.0
+            count = 0
+            
+            for plate_idx, obs_val in input_data.items():
+                # Assuming 'rf' key in reference_data items, not 'values'
+                # And that plate_idx corresponds to index in 'rf' list
+                if plate_idx < len(item['rf']): # Ensure index is valid
+                    ref_val = item['rf'][plate_idx]
+                    if ref_val is not None:
+                        dist += (obs_val - ref_val) ** 2
+                        count += 1
+            
+            if count > 0:
+                # Or total distance?
+                # User said "most similar". Regular distance usually.
+                # But if we compare based on 1 point vs 3 points, the 3-point distance will naturally be larger.
+                # So Mean Squared Error or RMS might be fairer.
+                mse = dist / count
+                scores.append((mse, name))
+        
+        # Sort by score (lowest error first)
+        scores.sort(key=lambda x: x[0])
+        
+        # Return top 5 unique names
+        unique_names = []
+        seen = set()
+        for _, name in scores:
+            if name not in seen:
+                unique_names.append(name)
+                seen.add(name)
+                if len(unique_names) >= 5:
+                    break
+                    
+        return unique_names

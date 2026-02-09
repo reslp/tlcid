@@ -1,0 +1,66 @@
+{
+    "samples": {
+        "1": {
+            "name": "Substance 1"
+        },
+        "2": {
+            "name": "Substance 2"
+        }
+    },
+    "plates": [
+        {
+            "id": 0,
+            "image_path": "/Users/sinnafoch/Dropbox/Projects/tlc-ai/examples/A.png",
+            "start_line_y": 0.8856781402191558,
+            "front_line_y": 0.14816224729859984,
+            "spots": [
+                {
+                    "sample_id": 1,
+                    "x": 0.23341635171469155,
+                    "y": 0.7689703606939935
+                },
+                {
+                    "sample_id": 2,
+                    "x": 0.2312052937297078,
+                    "y": 0.6368764902090097
+                }
+            ]
+        },
+        {
+            "id": 1,
+            "image_path": "/Users/sinnafoch/Dropbox/Projects/tlc-ai/examples/B.png",
+            "start_line_y": 0.9,
+            "front_line_y": 0.1,
+            "spots": [
+                {
+                    "sample_id": 1,
+                    "x": 0.24304879144065739,
+                    "y": 0.6039224733342778
+                },
+                {
+                    "sample_id": 2,
+                    "x": 0.23470033635747248,
+                    "y": 0.7350025868786432
+                }
+            ]
+        },
+        {
+            "id": 2,
+            "image_path": "/Users/sinnafoch/Dropbox/Projects/tlc-ai/examples/C.png",
+            "start_line_y": 0.9,
+            "front_line_y": 0.1,
+            "spots": [
+                {
+                    "sample_id": 1,
+                    "x": 0.22535447950487014,
+                    "y": 0.742709628018466
+                },
+                {
+                    "sample_id": 2,
+                    "x": 0.2297268161525974,
+                    "y": 0.620344048041802
+                }
+            ]
+        }
+    ]
+}
