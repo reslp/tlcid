@@ -602,6 +602,12 @@ class MainWindow(QMainWindow):
         elif link.startswith("edit_sample:"):
             sid = int(link.split(":", 1)[1])
             self.open_characteristics_window(sid)
+        elif link.startswith("show_more:"):
+            sid = int(link.split(":", 1)[1])
+            matches = self.samples.get(sid, {}).get('last_matches', [])
+            if matches:
+                 text = "\n".join(matches)
+                 QMessageBox.information(self, f"All Matches for {self.samples[sid]['name']}", text)
 
     def open_characteristics_window(self, sid):
         if sid not in self.samples:
@@ -904,11 +910,18 @@ class MainWindow(QMainWindow):
             
             pred_label = QLabel()
             if matches:
+                 self.samples[sid]['last_matches'] = matches
+                 
+                 display_matches = matches[:5]
                  match_links = []
-                 for m in matches:
+                 for m in display_matches:
                      match_links.append(f"<a href='substance:{m}'>{m}</a>")
                  match_str = ", ".join(match_links)
                  
+                 if len(matches) > 5:
+                     more_count = len(matches) - 5
+                     match_str += f" <a href='show_more:{sid}' style='color:blue;'>+{more_count} more</a>"
+
                  if current_filter:
                      match_str += f" <small style='color:gray'>[{current_filter}]</small>"
                      
@@ -1244,16 +1257,12 @@ class MainWindow(QMainWindow):
         # Sort by score (lowest error first)
         scores.sort(key=lambda x: x[0])
         
-        # Return top 5 unique names (For Range, returning all might be better? But space is limited)
-        # User request didn't specify limit for Range, but UI is a small column.
-        # Let's keep top 5 limit for now to avoid UI overflow.
+        # Return all unique names sorted by score
         unique_names = []
         seen = set()
         for _, name in scores:
             if name not in seen:
                 unique_names.append(name)
                 seen.add(name)
-                if len(unique_names) >= 5:
-                    break
                     
         return unique_names
