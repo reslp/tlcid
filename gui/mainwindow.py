@@ -698,7 +698,14 @@ class MainWindow(QMainWindow):
             slot.image_label.set_add_sample_mode(True, sid)
 
     def show_about_dialog(self):
-        QMessageBox.about(self, "About TLCid", "TLCid\nCopyright by Philipp Resl 2026")
+        import os
+        version = "Unknown"
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        version_path = os.path.join(base_path, "VERSION")
+        if os.path.exists(version_path):
+            with open(version_path, 'r') as f:
+                version = f.read().strip()
+        QMessageBox.about(self, "About TLCid", f"TLCid v{version}\nCopyright by Philipp Resl 2026")
 
     def show_settings_window(self):
         from gui.settings_window import SettingsWindow
