@@ -356,6 +356,7 @@ class MainWindow(QMainWindow):
         
         # State
         self.samples = {} # {id: {'color': QColor, 'name': str}}
+        self.genus_to_substances = {} # Cache for genus-specific substance filtering
         self.next_sample_id = 1
         self.colors = [
             QColor("cyan"), QColor("magenta"), QColor("yellow"), 
@@ -1108,6 +1109,7 @@ class MainWindow(QMainWindow):
         
     def load_reference_data(self):
         self.reference_data = []
+        self.genus_to_substances = {}
         import os
         from PyQt6.QtSql import QSqlDatabase, QSqlQuery
         
@@ -1121,6 +1123,16 @@ class MainWindow(QMainWindow):
             db.setDatabaseName(db_path)
             
         if db.open():
+            # Populate Genus Cache
+            gen_query = QSqlQuery(db)
+            if gen_query.exec("SELECT DISTINCT Genus, Substance FROM Lichens"):
+                while gen_query.next():
+                    g = gen_query.value(0)
+                    s = gen_query.value(1)
+                    if g not in self.genus_to_substances:
+                        self.genus_to_substances[g] = set()
+                    self.genus_to_substances[g].add(s.lower())
+
             tables = ["Substances", "SubstancesBackup"]
             for table in tables:
                 query = QSqlQuery(db)
@@ -1148,18 +1160,10 @@ class MainWindow(QMainWindow):
                         aft_vis = query.value(9)
                         aft_uv = query.value(10)
                         
-                        # Parse Genus (First word of Lichens)
-                        genus = None
-                        if lichens_str:
-                            parts = lichens_str.strip().split()
-                            if parts:
-                                genus = parts[0]
-                        
                         self.reference_data.append({
                             'name': name,
                             'rf': [rf_a, rf_b, rf_c], # Matching slots 0, 1, 2
                             'GroupName': group_name,
-                            'Genus': genus,
                             'BefVis': bef_vis,
                             'BefUVS': bef_uvs,
                             'BefUVL': bef_uvl,
@@ -1185,9 +1189,11 @@ class MainWindow(QMainWindow):
             if filter_group and item.get('GroupName') != filter_group:
                 continue
                 
-            # Filter by Genus
-            if filter_genus and item.get('Genus') != filter_genus:
-                continue
+            # Filter by Genus (Optimized using Lichens table mapping)
+            if filter_genus:
+                valid_subs = self.genus_to_substances.get(filter_genus, set())
+                if name.lower() not in valid_subs:
+                    continue
 
             # Filter by Visual Characteristics (only if checkbox is checked)
             # Database marks positive with '+'
