@@ -235,18 +235,6 @@ class ImageSlot(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(self.layout)
         
-        # Coordinate Display (Lines)
-        self.coord_layout = QHBoxLayout()
-        self.start_coord_label = QLabel("Start: -")
-        self.start_coord_label.setStyleSheet("color: green; font-weight: bold;")
-        self.front_coord_label = QLabel("Front: -")
-        self.front_coord_label.setStyleSheet("color: red; font-weight: bold;")
-        
-        self.coord_layout.addWidget(self.start_coord_label)
-        self.coord_layout.addStretch()
-        self.coord_layout.addWidget(self.front_coord_label)
-        self.layout.addLayout(self.coord_layout)
-        
         # Title
         self.title_label = QLabel(title)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -258,7 +246,6 @@ class ImageSlot(QWidget):
         
         # Image Area
         self.image_label = SquareLabel()
-        self.image_label.linesMoved.connect(self.update_coords)
         self.layout.addWidget(self.image_label)
         
         # Controls
@@ -343,10 +330,6 @@ class ImageSlot(QWidget):
         painter.end()
         
         export_pixmap.save(file_name)
-    
-    def update_coords(self, start_y, front_y):
-        self.start_coord_label.setText(f"Start: {start_y:.3f}")
-        self.front_coord_label.setText(f"Front: {front_y:.3f}")
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -382,7 +365,7 @@ class MainWindow(QMainWindow):
         }
 
         # Detection Settings
-        self.detection_method = "MSE"
+        self.detection_method = "Range"
         self.detection_range = 0.05
 
         
@@ -533,6 +516,12 @@ class MainWindow(QMainWindow):
         substance_detection_action.triggered.connect(self.show_settings_window)
         settings_menu.addAction(substance_detection_action)
 
+        # Analysis Menu
+        analysis_menu = menu_bar.addMenu("Analysis")
+        predict_species_action = QAction("Predict species", self)
+        predict_species_action.triggered.connect(self.show_species_prediction_window)
+        analysis_menu.addAction(predict_species_action)
+
         # Reference Menu
         ref_menu = menu_bar.addMenu("Reference")
         
@@ -643,6 +632,9 @@ class MainWindow(QMainWindow):
         current_aft_vis = self.samples[sid].get('filter_aft_vis')
         current_aft_uv = self.samples[sid].get('filter_aft_uv')
         
+        assigned_name = self.samples[sid].get('assigned_name')
+        candidates = self.samples[sid].get('last_matches', [])
+
         # Unique key? sid is unique.
         if sid in self.char_windows and self.char_windows[sid].isVisible():
             self.char_windows[sid].raise_()
@@ -651,12 +643,13 @@ class MainWindow(QMainWindow):
 
         window = SubstanceCharacteristicsWindow(sid, sample_name, current_group, current_genus, 
                                                 current_vis, current_uvs, current_uvl, 
-                                                current_aft_vis, current_aft_uv, db)
+                                                current_aft_vis, current_aft_uv, 
+                                                assigned_name, candidates, db)
         window.filterChanged.connect(self.set_sample_filter)
         self.char_windows[sid] = window
         window.show()
 
-    def set_sample_filter(self, sid, group_name, genus, is_vis, is_uvs, is_uvl, aft_vis, aft_uv):
+    def set_sample_filter(self, sid, group_name, genus, is_vis, is_uvs, is_uvl, aft_vis, aft_uv, assigned_name):
         if sid in self.samples:
             self.samples[sid]['filter_group'] = group_name
             self.samples[sid]['filter_genus'] = genus
@@ -665,6 +658,7 @@ class MainWindow(QMainWindow):
             self.samples[sid]['filter_uvl'] = is_uvl
             self.samples[sid]['filter_aft_vis'] = aft_vis
             self.samples[sid]['filter_aft_uv'] = aft_uv
+            self.samples[sid]['assigned_name'] = assigned_name
             self.update_results_display()
 
     def ensure_single_mode(self, active_btn):
@@ -696,6 +690,50 @@ class MainWindow(QMainWindow):
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
+
+    def show_species_prediction_window(self):
+        from gui.species_prediction_window import SpeciesPredictionWindow
+        from PyQt6.QtSql import QSqlDatabase
+        
+        # Gather all current predicted substances with their sample info
+        prediction_data = []
+        # Sort samples by ID to keep the list ordered
+        sorted_sample_ids = sorted(self.samples.keys())
+        
+        for sid in sorted_sample_ids:
+            if sid > 0: # Skip reference markers
+                sdata = self.samples[sid]
+                
+                # Use assigned name if available for display
+                display_name = sdata.get('assigned_name')
+                if not display_name:
+                    display_name = sdata['name']
+
+                matches = sdata.get('last_matches', [])
+                for m in matches:
+                    prediction_data.append({
+                        'name': m,
+                        'sample_name': display_name,
+                        'color': sdata['color']
+                    })
+        
+        if not prediction_data:
+            QMessageBox.warning(self, "No Predictions", "No substances have been predicted yet. Please mark spots on the plates first.")
+            return
+
+        # Ensure DB connection
+        if QSqlDatabase.contains("qt_sql_default_connection"):
+            db = QSqlDatabase.database()
+        else:
+             import os
+             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+             db_path = os.path.join(base_path, "Mytabolites.db")
+             db = QSqlDatabase.addDatabase("QSQLITE")
+             db.setDatabaseName(db_path)
+             if not db.open(): return
+
+        self.species_window = SpeciesPredictionWindow(prediction_data, db)
+        self.species_window.show()
 
     def update_detection_settings(self, method, range_val):
         self.detection_method = method
@@ -750,6 +788,10 @@ class MainWindow(QMainWindow):
             self.deactivate_marking_mode()
     
     def update_results_display(self):
+        # Clear previous matches for all samples
+        for sdata in self.samples.values():
+            sdata['last_matches'] = []
+
         # Aggregate data from all slots
         # Map: Sample ID -> { Plate Index -> [rf1, rf2, ...] }
         aggregated = {}
@@ -798,6 +840,10 @@ class MainWindow(QMainWindow):
             current_sid = 0 # Atranorin ID
             if current_sid in aggregated and len(aggregated[current_sid]) == 3:
                 self.mark_atranorin_button.click()
+        elif self.mark_norstictic_button.isChecked():
+            current_sid = -1 # Norstictic ID
+            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
+                self.mark_norstictic_button.click()
 
         # Calibration Logic
         # Gather Active Standards per Plate
@@ -845,7 +891,10 @@ class MainWindow(QMainWindow):
             
             # 2. Substance Name (Clickable Link)
             name_label = QLabel()
-            name_text = self.samples[sid]['name']
+            name_text = self.samples[sid].get('assigned_name')
+            if not name_text:
+                name_text = self.samples[sid]['name']
+            
             hex_c = color.name()
             # Link style
             name_label.setText(f"<a href='edit_sample:{sid}' style='color:steelblue; text-decoration:none;'><b>{name_text}</b></a>")
@@ -910,9 +959,8 @@ class MainWindow(QMainWindow):
                                                filter_aft_uv=f_aft_uv)
             
             pred_label = QLabel()
+            self.samples[sid]['last_matches'] = matches
             if matches:
-                 self.samples[sid]['last_matches'] = matches
-                 
                  display_matches = matches[:5]
                  match_links = []
                  for m in display_matches:
@@ -944,7 +992,7 @@ class MainWindow(QMainWindow):
         base_path = os.path.dirname(os.path.abspath(__file__))
         root_path = os.path.dirname(base_path)
         examples_dir = os.path.join(root_path, "examples")
-        example_files = ["A.png", "B.png", "C.png"]
+        example_files = ["A.jpeg", "B.jpeg", "C.jpeg"]
         
         for i, filename in enumerate(example_files):
             if i < len(self.slots):
@@ -1098,7 +1146,6 @@ class MainWindow(QMainWindow):
             slot.image_label.front_line_y = 0.1
             slot.image_label.show_lines = False
             slot.image_label.set_global_colors({})
-            slot.update_coords(0.9, 0.1) # Reset coord labels manually or via signal? 
             # Signal won't fire if lines aren't moved/set via setter that emits.
             # Let's forcefully emit or set text.
             slot.image_label.linesMoved.emit(0.1, 0.9) # Inverted: 1-0.9=0.1 start, 1-0.1=0.9 front

@@ -3,15 +3,15 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtSql import QSqlQuery
 
 class SubstanceCharacteristicsWindow(QDialog):
-    # sample_id, group_name, genus, bef_vis, bef_uvs, bef_uvl, aft_vis, aft_uv
-    filterChanged = pyqtSignal(int, str, str, bool, bool, bool, str, str)
+    # sample_id, group_name, genus, bef_vis, bef_uvs, bef_uvl, aft_vis, aft_uv, assigned_name
+    filterChanged = pyqtSignal(int, str, str, bool, bool, bool, str, str, str)
 
     def __init__(self, sample_id, sample_name, current_group, current_genus, 
                  current_vis, current_uvs, current_uvl, 
-                 current_aft_vis, current_aft_uv, db):
+                 current_aft_vis, current_aft_uv, assigned_name, candidates, db):
         super().__init__()
         self.setWindowTitle(f"Characteristics: {sample_name}")
-        self.resize(400, 600)
+        self.resize(400, 700)
         self.sample_id = sample_id
         self.db = db
         
@@ -73,6 +73,25 @@ class SubstanceCharacteristicsWindow(QDialog):
         self.load_aft_uv(current_aft_uv)
         self.combo_aft_uv.currentIndexChanged.connect(self.on_change)
         layout.addWidget(self.combo_aft_uv)
+
+        layout.addWidget(QLabel("<hr>"))
+
+        # Substance Name Assignment
+        layout.addWidget(QLabel(f"<b>Assign Substance Name:</b>"))
+        self.combo_assigned = QComboBox()
+        self.combo_assigned.setEditable(True)
+        self.combo_assigned.addItem("Default (Substance X)", None)
+        for c in candidates:
+            self.combo_assigned.addItem(c, c)
+        
+        if assigned_name:
+            self.combo_assigned.setEditText(assigned_name)
+        else:
+            self.combo_assigned.setCurrentIndex(0)
+
+        self.combo_assigned.currentIndexChanged.connect(self.on_change)
+        self.combo_assigned.editTextChanged.connect(self.on_change)
+        layout.addWidget(self.combo_assigned)
 
         layout.addStretch()
         
@@ -150,6 +169,10 @@ class SubstanceCharacteristicsWindow(QDialog):
         aft_vis = self.combo_aft_vis.currentData()
         aft_uv = self.combo_aft_uv.currentData()
         
+        assigned_name = self.combo_assigned.currentText()
+        if self.combo_assigned.currentIndex() == 0 and assigned_name == "Default (Substance X)":
+            assigned_name = None
+
         self.filterChanged.emit(self.sample_id, group_data, genus_data, 
                                 is_vis, is_uvs, is_uvl,
-                                aft_vis, aft_uv)
+                                aft_vis, aft_uv, assigned_name)
