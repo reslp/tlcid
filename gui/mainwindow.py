@@ -33,12 +33,17 @@ class SquareLabel(QLabel):
         self.current_sample_id = None
         self.dragged_spot_index = None 
         self.global_colors = {}
+        self.global_names = {}
         
         # Line Dragging State
         self.dragged_line = None # "Start" or "Front"
 
     def set_global_colors(self, colors):
         self.global_colors = colors
+
+    def set_global_names(self, names):
+        self.global_names = names
+        self.update()
 
     def hasHeightForWidth(self):
         return True
@@ -214,6 +219,13 @@ class SquareLabel(QLabel):
                 py = int(spot['y'] * self.height())
                 painter.drawEllipse(px - self.spot_radius, py - self.spot_radius, 
                                     self.spot_radius * 2, self.spot_radius * 2)
+                
+                name = self.global_names.get(sid)
+                if name:
+                    font = painter.font()
+                    font.setPointSize(8)
+                    painter.setFont(font)
+                    painter.drawText(px + self.spot_radius + 5, py - 5, name)
 
     def update_display(self):
         if self._original_pixmap and not self._original_pixmap.isNull():
@@ -326,6 +338,13 @@ class ImageSlot(QWidget):
             py = int(spot['y'] * h)
             
             painter.drawEllipse(px - spot_radius, py - spot_radius, spot_radius * 2, spot_radius * 2)
+            
+            name = self.image_label.global_names.get(sid)
+            if name:
+                font = painter.font()
+                font.setPointSize(int(9 * scale_factor))
+                painter.setFont(font)
+                painter.drawText(px + spot_radius + int(5 * scale_factor), py - int(5 * scale_factor), name)
             
         painter.end()
         
@@ -510,14 +529,13 @@ class MainWindow(QMainWindow):
 
 
 
-        # Settings Menu
-        settings_menu = menu_bar.addMenu("Settings")
-        substance_detection_action = QAction("Substance Detection", self)
-        substance_detection_action.triggered.connect(self.show_settings_window)
-        settings_menu.addAction(substance_detection_action)
-
         # Analysis Menu
         analysis_menu = menu_bar.addMenu("Analysis")
+        
+        substance_detection_action = QAction("Substance Detection", self)
+        substance_detection_action.triggered.connect(self.show_settings_window)
+        analysis_menu.addAction(substance_detection_action)
+
         predict_species_action = QAction("Predict species", self)
         predict_species_action.triggered.connect(self.show_species_prediction_window)
         analysis_menu.addAction(predict_species_action)
@@ -634,6 +652,7 @@ class MainWindow(QMainWindow):
         
         assigned_name = self.samples[sid].get('assigned_name')
         candidates = self.samples[sid].get('last_matches', [])
+        show_on_plate = self.samples[sid].get('show_on_plate', False)
 
         # Unique key? sid is unique.
         if sid in self.char_windows and self.char_windows[sid].isVisible():
@@ -644,12 +663,12 @@ class MainWindow(QMainWindow):
         window = SubstanceCharacteristicsWindow(sid, sample_name, current_group, current_genus, 
                                                 current_vis, current_uvs, current_uvl, 
                                                 current_aft_vis, current_aft_uv, 
-                                                assigned_name, candidates, db)
+                                                assigned_name, candidates, show_on_plate, db)
         window.filterChanged.connect(self.set_sample_filter)
         self.char_windows[sid] = window
         window.show()
 
-    def set_sample_filter(self, sid, group_name, genus, is_vis, is_uvs, is_uvl, aft_vis, aft_uv, assigned_name):
+    def set_sample_filter(self, sid, group_name, genus, is_vis, is_uvs, is_uvl, aft_vis, aft_uv, assigned_name, show_on_plate):
         if sid in self.samples:
             self.samples[sid]['filter_group'] = group_name
             self.samples[sid]['filter_genus'] = genus
@@ -659,6 +678,7 @@ class MainWindow(QMainWindow):
             self.samples[sid]['filter_aft_vis'] = aft_vis
             self.samples[sid]['filter_aft_uv'] = aft_uv
             self.samples[sid]['assigned_name'] = assigned_name
+            self.samples[sid]['show_on_plate'] = show_on_plate
             self.update_results_display()
 
     def ensure_single_mode(self, active_btn):
@@ -704,18 +724,24 @@ class MainWindow(QMainWindow):
             if sid > 0: # Skip reference markers
                 sdata = self.samples[sid]
                 
-                # Use assigned name if available for display
-                display_name = sdata.get('assigned_name')
-                if not display_name:
-                    display_name = sdata['name']
-
-                matches = sdata.get('last_matches', [])
-                for m in matches:
+                assigned = sdata.get('assigned_name')
+                if assigned:
+                    # If manually named, only use that name for species prediction
                     prediction_data.append({
-                        'name': m,
-                        'sample_name': display_name,
+                        'name': assigned,
+                        'sample_name': assigned,
                         'color': sdata['color']
                     })
+                else:
+                    # Otherwise, use all predicted candidates for this spot
+                    display_name = sdata['name']
+                    matches = sdata.get('last_matches', [])
+                    for m in matches:
+                        prediction_data.append({
+                            'name': m,
+                            'sample_name': display_name,
+                            'color': sdata['color']
+                        })
         
         if not prediction_data:
             QMessageBox.warning(self, "No Predictions", "No substances have been predicted yet. Please mark spots on the plates first.")
@@ -986,6 +1012,16 @@ class MainWindow(QMainWindow):
         # Restore Scroll Position
         self.results_table.verticalScrollBar().setValue(v_scroll)
         self.results_table.horizontalScrollBar().setValue(h_scroll)
+
+        # Update Name Mapping in slots
+        name_map = {}
+        for sid, sdata in self.samples.items():
+            if sdata.get('show_on_plate', False):
+                assigned = sdata.get('assigned_name')
+                name_map[sid] = assigned if assigned else sdata['name']
+        
+        for slot in self.slots:
+            slot.image_label.set_global_names(name_map)
             
     def load_examples(self):
         import os

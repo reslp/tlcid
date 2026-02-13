@@ -3,15 +3,15 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtSql import QSqlQuery
 
 class SubstanceCharacteristicsWindow(QDialog):
-    # sample_id, group_name, genus, bef_vis, bef_uvs, bef_uvl, aft_vis, aft_uv, assigned_name
-    filterChanged = pyqtSignal(int, str, str, bool, bool, bool, str, str, str)
+    # sample_id, group_name, genus, bef_vis, bef_uvs, bef_uvl, aft_vis, aft_uv, assigned_name, show_on_plate
+    filterChanged = pyqtSignal(int, str, str, bool, bool, bool, str, str, str, bool)
 
     def __init__(self, sample_id, sample_name, current_group, current_genus, 
                  current_vis, current_uvs, current_uvl, 
-                 current_aft_vis, current_aft_uv, assigned_name, candidates, db):
+                 current_aft_vis, current_aft_uv, assigned_name, candidates, show_on_plate, db):
         super().__init__()
         self.setWindowTitle(f"Characteristics: {sample_name}")
-        self.resize(400, 700)
+        self.resize(400, 750)
         self.sample_id = sample_id
         self.db = db
         
@@ -93,6 +93,11 @@ class SubstanceCharacteristicsWindow(QDialog):
         self.combo_assigned.editTextChanged.connect(self.on_change)
         layout.addWidget(self.combo_assigned)
 
+        self.check_show_name = QCheckBox("Show name on plate")
+        self.check_show_name.setChecked(show_on_plate)
+        self.check_show_name.stateChanged.connect(self.on_change)
+        layout.addWidget(self.check_show_name)
+
         layout.addStretch()
         
         # Close button
@@ -172,7 +177,9 @@ class SubstanceCharacteristicsWindow(QDialog):
         assigned_name = self.combo_assigned.currentText()
         if self.combo_assigned.currentIndex() == 0 and assigned_name == "Default (Substance X)":
             assigned_name = None
+            
+        show_on_plate = self.check_show_name.isChecked()
 
         self.filterChanged.emit(self.sample_id, group_data, genus_data, 
                                 is_vis, is_uvs, is_uvl,
-                                aft_vis, aft_uv, assigned_name)
+                                aft_vis, aft_uv, assigned_name, show_on_plate)

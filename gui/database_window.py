@@ -16,22 +16,43 @@ class DatabaseTableWindow(QWidget):
 
         # Search Bar
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search by name...")
+        self.search_input.setPlaceholderText("Search...")
         self.search_input.textChanged.connect(self.filter_data)
         self.layout.addWidget(self.search_input)
         
         self.setup_database()
         self.setup_ui()
+        
+        # Update placeholder based on table columns
+        self.update_search_placeholder()
+
+    def update_search_placeholder(self):
+        cols = []
+        for col in ["name", "Lichen", "Substance", "Genus"]:
+            if self.model.fieldIndex(col) != -1:
+                cols.append(col)
+        if cols:
+            self.search_input.setPlaceholderText(f"Search by {', '.join(cols)}...")
 
     def filter_data(self, text):
         if not text:
             self.model.setFilter("")
         else:
-            # Safe SQL filtering (though typically parameter binding is better, 
-            # setFilter takes a raw WHERE clause string in QtSql)
-            # We assume 'name' column exists.
-            sanitized_text = text.replace("'", "''") # Basic SQL escape
-            self.model.setFilter(f"name LIKE '%{sanitized_text}%'")
+            # Safe SQL filtering for multiple identifying columns
+            sanitized_text = text.replace("'", "''")
+            filter_parts = []
+            
+            # Identify columns to search in
+            for col in ["name", "Lichen", "Substance", "Genus"]:
+                if self.model.fieldIndex(col) != -1:
+                    filter_parts.append(f"{col} LIKE '%{sanitized_text}%'")
+            
+            if filter_parts:
+                self.model.setFilter(" OR ".join(filter_parts))
+            else:
+                # If no known columns, don't filter to avoid SQL errors
+                self.model.setFilter("")
+        
         self.model.select()
         
     def setup_database(self):
