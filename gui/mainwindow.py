@@ -302,26 +302,69 @@ class ImageSlot(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
         # Dimensions of original image
-        w = export_pixmap.width()
-        h = export_pixmap.height()
+        img_w = export_pixmap.width()
+        img_h = export_pixmap.height()
         
+        # Widget Dimensions and Scaling Logic (matching SquareLabel.update_display)
+        # The label scales the pixmap to fit within its size while keeping aspect ratio.
+        # It centers the image if the label is larger than the scaled image in one dimension.
+        
+        label_w = self.image_label.width()
+        label_h = self.image_label.height()
+        
+        # Calculate the size of the pixmap as drawn on screen
+        if img_w <= 0 or img_h <= 0: return
+
+        # Calculate scale factor used by Qt's KeepAspectRatio
+        scale_w = label_w / img_w
+        scale_h = label_h / img_h
+        scale = min(scale_w, scale_h)
+        
+        drawn_w = int(img_w * scale)
+        drawn_h = int(img_h * scale)
+        
+        # Calculate offsets (centering)
+        offset_x = (label_w - drawn_w) // 2
+        offset_y = (label_h - drawn_h) // 2
+        
+        # Coordinate Transformation Function: Widget Normalized -> Image Pixel
+        def widget_norm_to_image_px(norm_val, is_y=True):
+            if is_y:
+                # Widget Pixel Y
+                widget_px = norm_val * label_h
+                # Image Pixel Y relative to drawn image top
+                rel_px = widget_px - offset_y
+                # Normalize to drawn image height
+                rel_norm = rel_px / drawn_h
+                # Scale to actual image height
+                return int(rel_norm * img_h)
+            else:
+                # Widget Pixel X
+                widget_px = norm_val * label_w
+                # Image Pixel X relative to drawn image left
+                rel_px = widget_px - offset_x
+                # Normalize to drawn image width
+                rel_norm = rel_px / drawn_w
+                # Scale to actual image width
+                return int(rel_norm * img_w)
+
         # Scale for drawing elements (assume 800px is standard view for relative sizing)
-        scale_factor = max(1.0, w / 800.0)
+        scale_factor = max(1.0, img_w / 800.0)
         line_width = int(4 * scale_factor)
         spot_radius = int(self.image_label.spot_radius * scale_factor)
         spot_pen_width = int(2 * scale_factor)
         
         # Draw Start Line (Green)
-        start_y = int(self.image_label.start_line_y * h)
+        start_y = widget_norm_to_image_px(self.image_label.start_line_y, is_y=True)
         pen = QPen(QColor("green"), line_width)
         painter.setPen(pen)
-        painter.drawLine(0, start_y, w, start_y)
+        painter.drawLine(0, start_y, img_w, start_y)
         
         # Draw Front Line (Red)
-        front_y = int(self.image_label.front_line_y * h)
+        front_y = widget_norm_to_image_px(self.image_label.front_line_y, is_y=True)
         pen = QPen(QColor("red"), line_width)
         painter.setPen(pen)
-        painter.drawLine(0, front_y, w, front_y)
+        painter.drawLine(0, front_y, img_w, front_y)
         
         # Draw Spots
         spots = self.image_label.spots
@@ -334,8 +377,8 @@ class ImageSlot(QWidget):
             color = colors.get(sid, QColor("black"))
             painter.setPen(QPen(color, spot_pen_width))
             
-            px = int(spot['x'] * w)
-            py = int(spot['y'] * h)
+            px = widget_norm_to_image_px(spot['x'], is_y=False)
+            py = widget_norm_to_image_px(spot['y'], is_y=True)
             
             painter.drawEllipse(px - spot_radius, py - spot_radius, spot_radius * 2, spot_radius * 2)
             
@@ -1064,7 +1107,18 @@ class MainWindow(QMainWindow):
         
         # Save Samples (only need ID and name, color can be deterministic)
         for sid, sdata in self.samples.items():
-            data["samples"][sid] = {"name": sdata["name"]}
+            data["samples"][sid] = {
+                "name": sdata["name"],
+                "assigned_name": sdata.get('assigned_name'),
+                "show_on_plate": sdata.get('show_on_plate', False),
+                "filter_group": sdata.get('filter_group'),
+                "filter_genus": sdata.get('filter_genus'),
+                "filter_vis": sdata.get('filter_vis', False),
+                "filter_uvs": sdata.get('filter_uvs', False),
+                "filter_uvl": sdata.get('filter_uvl', False),
+                "filter_aft_vis": sdata.get('filter_aft_vis'),
+                "filter_aft_uv": sdata.get('filter_aft_uv')
+            }
             
         # Save Plates
         for i, slot in enumerate(self.slots):
@@ -1117,7 +1171,19 @@ class MainWindow(QMainWindow):
                 if sid > max_sid:
                     max_sid = sid
                 color = self.colors[(sid - 1) % len(self.colors)]
-                self.samples[sid] = {'color': color, 'name': sdata['name']}
+                self.samples[sid] = {
+                    'color': color, 
+                    'name': sdata['name'],
+                    'assigned_name': sdata.get('assigned_name'),
+                    'show_on_plate': sdata.get('show_on_plate', False),
+                    'filter_group': sdata.get('filter_group'),
+                    'filter_genus': sdata.get('filter_genus'),
+                    'filter_vis': sdata.get('filter_vis', False),
+                    'filter_uvs': sdata.get('filter_uvs', False),
+                    'filter_uvl': sdata.get('filter_uvl', False),
+                    'filter_aft_vis': sdata.get('filter_aft_vis'),
+                    'filter_aft_uv': sdata.get('filter_aft_uv')
+                }
             
             self.next_sample_id = max_sid + 1
             
