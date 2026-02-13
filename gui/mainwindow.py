@@ -732,7 +732,7 @@ class MainWindow(QMainWindow):
             
             # Atranorin Mode (ID 0)
             self.mark_atranorin_button.setText("Stop Ref (Atr)")
-            self.activate_marking_mode(0, QColor("white"), "Atranorin (Ref)")
+            self.activate_marking_mode(0, QColor("red"), "Atranorin (Ref)")
         else:
             self.mark_atranorin_button.setText("Mark Atranorin")
             self.deactivate_marking_mode()
@@ -743,7 +743,7 @@ class MainWindow(QMainWindow):
             
             # Norstictic Mode (ID -1)
             self.mark_norstictic_button.setText("Stop Ref (Nor)")
-            self.activate_marking_mode(-1, QColor("cyan"), "Norstictic Acid (Ref)")
+            self.activate_marking_mode(-1, QColor("yellow"), "Norstictic Acid (Ref)")
         else:
             self.mark_norstictic_button.setText("Mark Norstictic")
             self.deactivate_marking_mode()
