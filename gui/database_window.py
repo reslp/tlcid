@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableView, QMessageBox, QHeaderView
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableView, QMessageBox, QHeaderView, QLineEdit, QLabel
 from PyQt6.QtSql import QSqlDatabase, QSqlTableModel
 from PyQt6.QtCore import Qt
 import os
@@ -13,9 +13,26 @@ class DatabaseTableWindow(QWidget):
         
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
+
+        # Search Bar
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search by name...")
+        self.search_input.textChanged.connect(self.filter_data)
+        self.layout.addWidget(self.search_input)
         
         self.setup_database()
         self.setup_ui()
+
+    def filter_data(self, text):
+        if not text:
+            self.model.setFilter("")
+        else:
+            # Safe SQL filtering (though typically parameter binding is better, 
+            # setFilter takes a raw WHERE clause string in QtSql)
+            # We assume 'name' column exists.
+            sanitized_text = text.replace("'", "''") # Basic SQL escape
+            self.model.setFilter(f"name LIKE '%{sanitized_text}%'")
+        self.model.select()
         
     def setup_database(self):
         # Check if connection already exists

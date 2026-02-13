@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
                              QLabel, QPushButton, QFileDialog, QSizePolicy, QComboBox,
-                             QTableWidget, QTableWidgetItem, QHeaderView, QColorDialog)
+                             QTableWidget, QTableWidgetItem, QHeaderView, QColorDialog,
+                             QMessageBox)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
@@ -350,7 +351,7 @@ class ImageSlot(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("TLC Analysis")
+        self.setWindowTitle("TLCid")
         self.resize(1200, 700) 
         
         # State
@@ -379,6 +380,10 @@ class MainWindow(QMainWindow):
             2: 0.30  # C
         }
 
+        # Detection Settings
+        self.detection_method = "MSE"
+        self.detection_range = 0.05
+
         
         # Main Layout Construction
         main_widget = QWidget()
@@ -404,6 +409,12 @@ class MainWindow(QMainWindow):
         self.mark_norstictic_button.setCheckable(True)
         self.mark_norstictic_button.clicked.connect(self.toggle_mark_norstictic)
         toolbar_layout.addWidget(self.mark_norstictic_button)
+
+        # Detection Status Label
+        self.detection_status_label = QLabel()
+        self.detection_status_label.setStyleSheet("color: gray; padding-left: 10px;")
+        toolbar_layout.addWidget(self.detection_status_label)
+        self.update_detection_status_label()
         
         toolbar_layout.addStretch()
         main_layout.addLayout(toolbar_layout)
@@ -411,7 +422,7 @@ class MainWindow(QMainWindow):
         # Slots Area
         slots_layout = QHBoxLayout()
         self.slots = []
-        self.plate_labels = ['A', 'Bprime', 'C']
+        self.plate_labels = ['A', "B'", 'C']
         for label in self.plate_labels:
             slot = ImageSlot(label)
             # Connect spot changes to aggregation logic
@@ -444,9 +455,8 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
             self.results_table.setColumnWidth(i, 60)
             
-        # 5: Predictions (Interactive, allow scrolling)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
-        self.results_table.setColumnWidth(5, 400)
+        # 5: Predictions (Fill remaining space)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         
         # Ensure horizontal scrolling is possible
         self.results_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -489,170 +499,15 @@ class MainWindow(QMainWindow):
                 
             self.update_results_display()
 
-    def update_results_display(self):
-        # Aggregate data from all slots
-        # Map: Sample ID -> { Plate Index -> [rf1, rf2, ...] }
-        aggregated = {}
-        
-        for i, slot in enumerate(self.slots):
-            # ... (calculation of rf_val) ...
-            
-            # Get Start and Front lines (raw normalized coords: 0=Top, 1=Bottom)
-            # Invert them for logical calculation (0=Bottom, 1=Top)
-            raw_start = slot.image_label.start_line_y
-            raw_front = slot.image_label.front_line_y
-            
-            u_start = 1.0 - raw_start
-            u_front = 1.0 - raw_front
-            
-            denom = u_front - u_start
-            
-            spots = slot.image_label.spots # list of dicts
-            for spot in spots:
-                sid = spot['sample_id']
-                raw_y = spot['y']
-                u_spot = 1.0 - raw_y
-                
-                # Calculate Rf
-                if abs(denom) < 1e-6:
-                    rf_val = 0.0 # Avoid div by zero
-                else:
-                    rf_val = (u_spot - u_start) / denom
-                
-                if sid not in aggregated:
-                    aggregated[sid] = {}
-                if i not in aggregated[sid]:
-                    aggregated[sid][i] = []
-                aggregated[sid][i].append(rf_val)
-        
-        # Check for auto-stop (omitted here, preserved in actual file)
-        # Check for auto-stop
-        if self.mark_substance_button.isChecked():
-            current_sid = self.next_sample_id - 1
-            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
-                self.mark_substance_button.click()
-        elif self.mark_atranorin_button.isChecked():
-            current_sid = 0 # Atranorin ID
-            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
-                self.mark_atranorin_button.click()
-        elif self.mark_norstictic_button.isChecked():
-            current_sid = -1 # Norstictic ID
-            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
-                self.mark_norstictic_button.click()
-
-        # Calibration Logic
-        # Gather Active Standards per Plate
-        # active_standards[plate_idx] = [(obs_rf, std_rf), ...]
-        active_standards = {0: [], 1: [], 2: []}
-        
-        # Check Atranorin (0)
-        if 0 in aggregated:
-             for idx, vals in aggregated[0].items():
-                 if vals and idx in self.atranorin_standards:
-                     active_standards[idx].append((vals[0], self.atranorin_standards[idx]))
-                     
-        # Check Norstictic (-1)
-        if -1 in aggregated:
-             for idx, vals in aggregated[-1].items():
-                 if vals and idx in self.norstictic_standards:
-                     active_standards[idx].append((vals[0], self.norstictic_standards[idx]))
-
-        for idx in active_standards:
-            active_standards[idx].sort(key=lambda x: x[0])
-
-        # Render
-        lines = []
-        # Sort by Sample ID
-        sorted_ids = sorted(aggregated.keys())
-        
-        for sid in sorted_ids:
-            if sid not in self.samples:
-                continue 
-                
-            color = self.samples[sid]['color']
-            hex_c = color.name()
-            
-            parts = []
-            plate_data = aggregated[sid]
-            prediction_input = {}
-            
-            for plate_idx, label in enumerate(self.plate_labels):
-                
-                if plate_idx in plate_data:
-                    raw_val = plate_data[plate_idx][0]
-                    corrected_val = raw_val
-                    
-                    # Apply Piecewise Calibration
-                    # Find next reference spot ABOVE (obs > raw_val) (Wait: user said "next reference spot above it (with higher values)")
-                    # Valid refs are those with ref_obs > raw_val.
-                    # "Next" means smallest of those (closest above).
-                    # If multiple references: use the closest one above.
-                    
-                    standards = active_standards.get(plate_idx, [])
-                    upper_ref = None
-                    for ref_obs, ref_std in standards:
-                        if ref_obs > raw_val:
-                            upper_ref = (ref_obs, ref_std)
-                            break # Since sorted, first one we meet > raw_val is the closest above
-                    
-                    # Logic: "Every newly marked spot should use the next reference spot above it...
-                    # If no reference is given (above), the front line value should be used."
-                    
-                    if upper_ref:
-                        ref_obs, ref_std = upper_ref
-                        # Correction: scale using that reference
-                        # Factor = Ref_Std / Ref_Obs
-                        if ref_obs > 1e-6:
-                             factor = ref_std / ref_obs
-                             corrected_val = raw_val * factor
-                    else:
-                        # No reference above. Use Front Line.
-                        # Front line Obs=1.0, Std=1.0. Factor = 1.0.
-                        corrected_val = raw_val
-                    
-                    prediction_input[plate_idx] = corrected_val
-                    vals = f"{corrected_val:.2f}"
-                    
-                    parts.append(f"<b>{label}</b>[{vals}]")
-                else:
-                    parts.append(f"<b>{label}</b>[-]")
-            
-            # Predict matches
-            matches = []
-            # Don't predict for Refs (IDs <= 0)
-            if sid > 0 and prediction_input:
-                current_filter = self.samples[sid].get('filter_group')
-                matches = self.predict_matches(prediction_input, filter_group=current_filter)
-            
-            # Format Name as Link
-            if sid > 0:
-                 name_html = f"<a href='edit_sample:{sid}' style='color:{hex_c}; text-decoration:none;'><b>{self.samples[sid]['name']}</b></a>"
-            else:
-                 name_html = f"<b>{self.samples[sid]['name']}</b>"
-            
-            line_str = f"<span style='color:{hex_c};'>{name_html}: " + " | ".join(parts)
-            
-            if matches:
-                 match_links = []
-                 for m in matches:
-                     match_links.append(f"<a href='substance:{m}'>{m}</a>")
-                 match_str = ", ".join(match_links)
-                 line_str += f" -> ({match_str})"
-            
-            if sid > 0 and self.samples[sid].get('filter_group'):
-                line_str += f" <small style='color:gray'>[Filter: {self.samples[sid].get('filter_group')}]</small>"
-                 
-            line_str += "</span>"
-            lines.append(line_str)
-        
-        self.results_label.setText("<br>".join(lines))
-        
-
-        
     def create_menu(self):
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("File")
         
+        about_action = QAction("About", self)
+        about_action.setMenuRole(QAction.MenuRole.NoRole)
+        about_action.triggered.connect(self.show_about_dialog)
+        file_menu.addAction(about_action)
+
         load_examples_action = QAction("Load Examples", self)
         load_examples_action.triggered.connect(self.load_examples)
         file_menu.addAction(load_examples_action)
@@ -668,6 +523,14 @@ class MainWindow(QMainWindow):
         new_analysis_action = QAction("New Analysis", self)
         new_analysis_action.triggered.connect(self.new_analysis)
         file_menu.addAction(new_analysis_action)
+
+
+
+        # Settings Menu
+        settings_menu = menu_bar.addMenu("Settings")
+        substance_detection_action = QAction("Substance Detection", self)
+        substance_detection_action.triggered.connect(self.show_settings_window)
+        settings_menu.addAction(substance_detection_action)
 
         # Reference Menu
         ref_menu = menu_bar.addMenu("Reference")
@@ -767,21 +630,34 @@ class MainWindow(QMainWindow):
         current_group = self.samples[sid].get('filter_group')
         current_genus = self.samples[sid].get('filter_genus')
         
+        current_vis = self.samples[sid].get('filter_vis', False)
+        current_uvs = self.samples[sid].get('filter_uvs', False)
+        current_uvl = self.samples[sid].get('filter_uvl', False)
+        current_aft_vis = self.samples[sid].get('filter_aft_vis')
+        current_aft_uv = self.samples[sid].get('filter_aft_uv')
+        
         # Unique key? sid is unique.
         if sid in self.char_windows and self.char_windows[sid].isVisible():
             self.char_windows[sid].raise_()
             self.char_windows[sid].activateWindow()
             return
 
-        window = SubstanceCharacteristicsWindow(sid, sample_name, current_group, current_genus, db)
+        window = SubstanceCharacteristicsWindow(sid, sample_name, current_group, current_genus, 
+                                                current_vis, current_uvs, current_uvl, 
+                                                current_aft_vis, current_aft_uv, db)
         window.filterChanged.connect(self.set_sample_filter)
         self.char_windows[sid] = window
         window.show()
 
-    def set_sample_filter(self, sid, group_name, genus):
+    def set_sample_filter(self, sid, group_name, genus, is_vis, is_uvs, is_uvl, aft_vis, aft_uv):
         if sid in self.samples:
             self.samples[sid]['filter_group'] = group_name
             self.samples[sid]['filter_genus'] = genus
+            self.samples[sid]['filter_vis'] = is_vis
+            self.samples[sid]['filter_uvs'] = is_uvs
+            self.samples[sid]['filter_uvl'] = is_uvl
+            self.samples[sid]['filter_aft_vis'] = aft_vis
+            self.samples[sid]['filter_aft_uv'] = aft_uv
             self.update_results_display()
 
     def ensure_single_mode(self, active_btn):
@@ -799,6 +675,32 @@ class MainWindow(QMainWindow):
         for slot in self.slots:
             slot.image_label.set_global_colors(color_map)
             slot.image_label.set_add_sample_mode(True, sid)
+
+    def show_about_dialog(self):
+        QMessageBox.about(self, "About TLCid", "TLCid\nCopyright by Philipp Resl 2026")
+
+    def show_settings_window(self):
+        from gui.settings_window import SettingsWindow
+        if not hasattr(self, 'settings_window') or self.settings_window is None:
+            self.settings_window = SettingsWindow()
+            self.settings_window.settingsChanged.connect(self.update_detection_settings)
+            
+        self.settings_window.set_current_settings(self.detection_method, self.detection_range)
+        self.settings_window.show()
+        self.settings_window.raise_()
+        self.settings_window.activateWindow()
+
+    def update_detection_settings(self, method, range_val):
+        self.detection_method = method
+        self.detection_range = range_val
+        self.update_detection_status_label()
+        self.update_results_display()
+
+    def update_detection_status_label(self):
+        text = f"Method: <b>{self.detection_method}</b>"
+        if self.detection_method == "Range":
+            text += f" (+/- {self.detection_range:.2f})"
+        self.detection_status_label.setText(text)
 
     def deactivate_marking_mode(self):
         for slot in self.slots:
@@ -858,6 +760,8 @@ class MainWindow(QMainWindow):
             
             spots = slot.image_label.spots # list of dicts
             for spot in spots:
+                # Debug print for spots
+                print(f"DEBUG: Spot on Plate {i}: {spot}")
                 sid = spot['sample_id']
                 raw_y = spot['y']
                 u_spot = 1.0 - raw_y
@@ -874,6 +778,9 @@ class MainWindow(QMainWindow):
                     aggregated[sid][i] = []
                 aggregated[sid][i].append(rf_val)
         
+        # Debug print for aggregated data
+        print(f"DEBUG: Aggregated Rf values: {aggregated}")
+
         # Check for auto-stop if currently marking
         if self.mark_substance_button.isChecked():
             current_sid = self.next_sample_id - 1
@@ -934,7 +841,7 @@ class MainWindow(QMainWindow):
             name_text = self.samples[sid]['name']
             hex_c = color.name()
             # Link style
-            name_label.setText(f"<a href='edit_sample:{sid}' style='color:white; text-decoration:none;'><b>{name_text}</b></a>")
+            name_label.setText(f"<a href='edit_sample:{sid}' style='color:steelblue; text-decoration:none;'><b>{name_text}</b></a>")
             name_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
             name_label.linkActivated.connect(self.handle_link_click)
             name_label.setContentsMargins(5, 0, 5, 0)
@@ -951,21 +858,22 @@ class MainWindow(QMainWindow):
                 val_str = "-"
                 if plate_idx in plate_data:
                     raw_val = plate_data[plate_idx][0]
-                    corrected_val = raw_val
                     
-                    # Apply Piecewise Calibration
+                    # Apply Linear Interpolation Calibration
                     standards = active_standards.get(plate_idx, [])
-                    upper_ref = None
-                    for ref_obs, ref_std in standards:
-                        if ref_obs > raw_val:
-                            upper_ref = (ref_obs, ref_std)
-                            break
+                    # Include boundary points (0,0) and (1,1)
+                    points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
                     
-                    if upper_ref:
-                        ref_obs, ref_std = upper_ref
-                        if ref_obs > 1e-6:
-                             factor = ref_std / ref_obs
-                             corrected_val = raw_val * factor
+                    corrected_val = raw_val # Default
+                    for j in range(len(points) - 1):
+                        x1, y1 = points[j]
+                        x2, y2 = points[j+1]
+                        if x1 <= raw_val <= x2:
+                            if abs(x2 - x1) > 1e-7:
+                                corrected_val = y1 + (raw_val - x1) * (y2 - y1) / (x2 - x1)
+                            else:
+                                corrected_val = y1
+                            break
                     
                     prediction_input[plate_idx] = corrected_val
                     val_str = f"{corrected_val:.2f}"
@@ -979,7 +887,20 @@ class MainWindow(QMainWindow):
             if sid > 0 and prediction_input:
                 current_filter = self.samples[sid].get('filter_group')
                 current_genus = self.samples[sid].get('filter_genus')
-                matches = self.predict_matches(prediction_input, filter_group=current_filter, filter_genus=current_genus)
+                f_vis = self.samples[sid].get('filter_vis', False)
+                f_uvs = self.samples[sid].get('filter_uvs', False)
+                f_uvl = self.samples[sid].get('filter_uvl', False)
+                f_aft_vis = self.samples[sid].get('filter_aft_vis')
+                f_aft_uv = self.samples[sid].get('filter_aft_uv')
+                
+                matches = self.predict_matches(prediction_input, 
+                                               filter_group=current_filter, 
+                                               filter_genus=current_genus,
+                                               filter_vis=f_vis,
+                                               filter_uvs=f_uvs,
+                                               filter_uvl=f_uvl,
+                                               filter_aft_vis=f_aft_vis,
+                                               filter_aft_uv=f_aft_uv)
             
             pred_label = QLabel()
             if matches:
@@ -1029,6 +950,9 @@ class MainWindow(QMainWindow):
             return
             
         data = {
+            "version": 1,
+            "detection_method": self.detection_method,
+            "detection_range": self.detection_range,
             "samples": {},
             "plates": []
         }
@@ -1069,6 +993,16 @@ class MainWindow(QMainWindow):
             
             # Reset State
             self.samples = {} # Clear samples
+            
+            # Load Detection Settings
+            if "detection_method" in data:
+                 self.detection_method = data["detection_method"]
+            if "detection_range" in data:
+                 self.detection_range = float(data["detection_range"])
+                 
+            # Update UI for detection settings
+            self.update_detection_status_label()
+            
             # Determine next sample id (max id + 1)
             max_sid = 0
             
@@ -1177,8 +1111,8 @@ class MainWindow(QMainWindow):
             tables = ["Substances", "SubstancesBackup"]
             for table in tables:
                 query = QSqlQuery(db)
-                # Select name, A, Bprime, C, GroupName AND Lichens
-                if query.exec(f"SELECT name, A, Bprime, C, GroupName, Lichens FROM {table}"):
+                # Select name, A, Bprime, C, GroupName, Lichens, BefVis, BefUVS, BefUVL, AftVis, AftUV
+                if query.exec(f"SELECT name, A, Bprime, C, GroupName, Lichens, BefVis, BefUVS, BefUVL, AftVis, AftUV FROM {table}"):
                     while query.next():
                         name = query.value(0)
                         
@@ -1195,6 +1129,11 @@ class MainWindow(QMainWindow):
                         rf_c = parse_rf(query.value(3))
                         group_name = query.value(4)
                         lichens_str = query.value(5)
+                        bef_vis = query.value(6)
+                        bef_uvs = query.value(7)
+                        bef_uvl = query.value(8)
+                        aft_vis = query.value(9)
+                        aft_uv = query.value(10)
                         
                         # Parse Genus (First word of Lichens)
                         genus = None
@@ -1207,15 +1146,24 @@ class MainWindow(QMainWindow):
                             'name': name,
                             'rf': [rf_a, rf_b, rf_c], # Matching slots 0, 1, 2
                             'GroupName': group_name,
-                            'Genus': genus
+                            'Genus': genus,
+                            'BefVis': bef_vis,
+                            'BefUVS': bef_uvs,
+                            'BefUVL': bef_uvl,
+                            'AftVis': aft_vis,
+                            'AftUV': aft_uv
                         })
             db.close()
         
-    def predict_matches(self, input_data, filter_group=None, filter_genus=None):
+    def predict_matches(self, input_data, filter_group=None, filter_genus=None, 
+                        filter_vis=False, filter_uvs=False, filter_uvl=False,
+                        filter_aft_vis=None, filter_aft_uv=None):
         # input_data: {plate_idx: value}
         # Returns list of top names
         
         scores = []
+        # Detection Setting: self.detection_method ("MSE" or "Range")
+        # Detection Range: self.detection_range
         
         for item in self.reference_data:
             name = item['name']
@@ -1228,31 +1176,77 @@ class MainWindow(QMainWindow):
             if filter_genus and item.get('Genus') != filter_genus:
                 continue
 
-            # Calculate Distance
-            dist = 0.0
-            count = 0
-            
-            for plate_idx, obs_val in input_data.items():
-                # Assuming 'rf' key in reference_data items, not 'values'
-                # And that plate_idx corresponds to index in 'rf' list
-                if plate_idx < len(item['rf']): # Ensure index is valid
-                    ref_val = item['rf'][plate_idx]
-                    if ref_val is not None:
-                        dist += (obs_val - ref_val) ** 2
-                        count += 1
-            
-            if count > 0:
-                # Or total distance?
-                # User said "most similar". Regular distance usually.
-                # But if we compare based on 1 point vs 3 points, the 3-point distance will naturally be larger.
-                # So Mean Squared Error or RMS might be fairer.
-                mse = dist / count
-                scores.append((mse, name))
+            # Filter by Visual Characteristics (only if checkbox is checked)
+            # Database marks positive with '+'
+            if filter_vis:
+                if item.get('BefVis') != '+':
+                    continue
+            if filter_uvs:
+                if item.get('BefUVS') != '+':
+                    continue
+            if filter_uvl:
+                if item.get('BefUVL') != '+':
+                    continue
+
+            # Filter by After Treatment Characteristics
+            # Exact match if filter is set
+            if filter_aft_vis:
+                if item.get('AftVis') != filter_aft_vis:
+                    continue
+            if filter_aft_uv:
+                if item.get('AftUV') != filter_aft_uv:
+                    continue
+
+            if self.detection_method == "Range":
+                # Range Logic: ALL present plates must be within range
+                match = True
+                dist = 0.0
+                count = 0
+                
+                for plate_idx, obs_val in input_data.items():
+                   if plate_idx < len(item['rf']):
+                       ref_val = item['rf'][plate_idx]
+                       if ref_val is None:
+                           match = False
+                           break
+                       
+                       error = abs(obs_val - ref_val)
+                       if error > self.detection_range:
+                           match = False
+                           break
+                       
+                       dist += error ** 2
+                       count += 1
+                   else:
+                       match = False
+                       break
+                
+                if match and count > 0:
+                    mse = dist / count
+                    scores.append((mse, name))
+
+            else:
+                # MSE Logic
+                dist = 0.0
+                count = 0
+                
+                for plate_idx, obs_val in input_data.items():
+                    if plate_idx < len(item['rf']): # Ensure index is valid
+                        ref_val = item['rf'][plate_idx]
+                        if ref_val is not None:
+                            dist += (obs_val - ref_val) ** 2
+                            count += 1
+                
+                if count > 0:
+                    mse = dist / count
+                    scores.append((mse, name))
         
         # Sort by score (lowest error first)
         scores.sort(key=lambda x: x[0])
         
-        # Return top 5 unique names
+        # Return top 5 unique names (For Range, returning all might be better? But space is limited)
+        # User request didn't specify limit for Range, but UI is a small column.
+        # Let's keep top 5 limit for now to avoid UI overflow.
         unique_names = []
         seen = set()
         for _, name in scores:
