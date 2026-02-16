@@ -606,6 +606,10 @@ class MainWindow(QMainWindow):
         predict_species_action.triggered.connect(self.show_species_prediction_window)
         analysis_menu.addAction(predict_species_action)
 
+        export_combined_action = QAction("Export Combined Image", self)
+        export_combined_action.triggered.connect(self.export_combined_image)
+        analysis_menu.addAction(export_combined_action)
+
         # Reference Menu
         ref_menu = menu_bar.addMenu("Reference")
         
@@ -829,6 +833,82 @@ class MainWindow(QMainWindow):
 
         self.species_window = SpeciesPredictionWindow(prediction_data, db)
         self.species_window.show()
+
+    def export_combined_image(self):
+        """Export a combined image of all three plates (A, B', C) side by side,
+        including all marked spots, lines, and substance names."""
+        from PyQt6.QtGui import QImage, QFont
+
+        # Collect marked pixmaps from all slots that have images loaded
+        pixmaps = []
+        labels = []
+        for i, slot in enumerate(self.slots):
+            pm = slot.get_marked_pixmap()
+            if pm is not None:
+                pixmaps.append(pm)
+                labels.append(self.plate_labels[i])
+
+        if not pixmaps:
+            QMessageBox.warning(self, "No Images", "No plate images are loaded. Please load at least one image before exporting.")
+            return
+
+        # Calculate combined canvas dimensions
+        # Use uniform height (max height among all plates) and scale each plate proportionally
+        padding = 20  # px between plates
+        label_height = 40  # px reserved for plate label at top
+
+        max_h = max(pm.height() for pm in pixmaps)
+
+        # Scale each pixmap to the same height while preserving aspect ratio
+        scaled_pixmaps = []
+        for pm in pixmaps:
+            if pm.height() != max_h:
+                scaled = pm.scaledToHeight(max_h, Qt.TransformationMode.SmoothTransformation)
+            else:
+                scaled = pm
+            scaled_pixmaps.append(scaled)
+
+        total_w = sum(pm.width() for pm in scaled_pixmaps) + padding * (len(scaled_pixmaps) - 1)
+        total_h = max_h + label_height
+
+        # Create the combined canvas
+        combined = QImage(total_w, total_h, QImage.Format.Format_RGB32)
+        combined.fill(QColor("white"))
+
+        painter = QPainter(combined)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw each plate and its label
+        x_offset = 0
+        label_font = QFont()
+        label_font_size = max(14, int(max_h / 40))
+        label_font.setPointSize(label_font_size)
+        label_font.setBold(True)
+
+        for idx, (pm, label) in enumerate(zip(scaled_pixmaps, labels)):
+            # Draw plate label centered above the image
+            painter.setFont(label_font)
+            painter.setPen(QColor("black"))
+            text_rect = painter.fontMetrics().boundingRect(label)
+            text_x = x_offset + (pm.width() - text_rect.width()) // 2
+            text_y = label_height - 8
+            painter.drawText(text_x, text_y, label)
+
+            # Draw the plate image below the label
+            painter.drawPixmap(x_offset, label_height, pm)
+
+            x_offset += pm.width() + padding
+
+        painter.end()
+
+        # Save dialog
+        file_name, _ = QFileDialog.getSaveFileName(
+            self, "Export Combined Image", "", "PNG Images (*.png);;JPEG Images (*.jpg)"
+        )
+        if not file_name:
+            return
+
+        combined.save(file_name)
 
     def update_detection_settings(self, method, range_val):
         self.detection_method = method
@@ -1122,6 +1202,8 @@ class MainWindow(QMainWindow):
 
                  if current_filter:
                      match_str += f" <small style='color:gray'>[{current_filter}]</small>"
+                 if current_genus:
+                     match_str += f" <small style='color:gray'>[Genus: {current_genus}]</small>"
                      
                  pred_label.setText(match_str)
                  pred_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
