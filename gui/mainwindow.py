@@ -285,15 +285,11 @@ class ImageSlot(QWidget):
             if not pixmap.isNull():
                 self.image_label.set_image(pixmap)
 
-    def export_marked_image(self):
+    def get_marked_pixmap(self):
+        """Return a QPixmap of the original image with all annotations drawn on it,
+        or None if no image is loaded."""
         if not self.image_path or not self.image_label._original_pixmap:
-            return
-            
-        file_name, _ = QFileDialog.getSaveFileName(
-            self, "Export Marked Image", "", "PNG Images (*.png);;JPEG Images (*.jpg)"
-        )
-        if not file_name:
-            return
+            return None
             
         # Create a mutable copy of the original pixmap
         export_pixmap = self.image_label._original_pixmap.copy()
@@ -306,14 +302,12 @@ class ImageSlot(QWidget):
         img_h = export_pixmap.height()
         
         # Widget Dimensions and Scaling Logic (matching SquareLabel.update_display)
-        # The label scales the pixmap to fit within its size while keeping aspect ratio.
-        # It centers the image if the label is larger than the scaled image in one dimension.
-        
         label_w = self.image_label.width()
         label_h = self.image_label.height()
         
-        # Calculate the size of the pixmap as drawn on screen
-        if img_w <= 0 or img_h <= 0: return
+        if img_w <= 0 or img_h <= 0:
+            painter.end()
+            return None
 
         # Calculate scale factor used by Qt's KeepAspectRatio
         scale_w = label_w / img_w
@@ -330,22 +324,14 @@ class ImageSlot(QWidget):
         # Coordinate Transformation Function: Widget Normalized -> Image Pixel
         def widget_norm_to_image_px(norm_val, is_y=True):
             if is_y:
-                # Widget Pixel Y
                 widget_px = norm_val * label_h
-                # Image Pixel Y relative to drawn image top
                 rel_px = widget_px - offset_y
-                # Normalize to drawn image height
                 rel_norm = rel_px / drawn_h
-                # Scale to actual image height
                 return int(rel_norm * img_h)
             else:
-                # Widget Pixel X
                 widget_px = norm_val * label_w
-                # Image Pixel X relative to drawn image left
                 rel_px = widget_px - offset_x
-                # Normalize to drawn image width
                 rel_norm = rel_px / drawn_w
-                # Scale to actual image width
                 return int(rel_norm * img_w)
 
         # Scale for drawing elements (assume 800px is standard view for relative sizing)
@@ -391,6 +377,19 @@ class ImageSlot(QWidget):
             
         painter.end()
         
+        return export_pixmap
+
+    def export_marked_image(self):
+        export_pixmap = self.get_marked_pixmap()
+        if export_pixmap is None:
+            return
+            
+        file_name, _ = QFileDialog.getSaveFileName(
+            self, "Export Marked Image", "", "PNG Images (*.png);;JPEG Images (*.jpg)"
+        )
+        if not file_name:
+            return
+            
         export_pixmap.save(file_name)
 
 class MainWindow(QMainWindow):
