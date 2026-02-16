@@ -463,6 +463,18 @@ class MainWindow(QMainWindow):
         self.update_detection_status_label()
         
         toolbar_layout.addStretch()
+        
+        # App Icon
+        import os
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        icon_path = os.path.join(base_path, "icon.png")
+        if os.path.exists(icon_path):
+            self.icon_label = QLabel()
+            icon_pixmap = QPixmap(icon_path)
+            if not icon_pixmap.isNull():
+                self.icon_label.setPixmap(icon_pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                toolbar_layout.addWidget(self.icon_label)
+
         main_layout.addLayout(toolbar_layout)
 
         # Slots Area
