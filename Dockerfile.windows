@@ -1,0 +1,28 @@
+FROM tobix/pywine:3.10
+
+# Install dependencies
+# We use 'wine python -m pip' to install into the Windows python environment
+
+# Update pip and install wheel/setuptools in separate layers to ensure they stick
+RUN wine python -m pip install --upgrade pip
+RUN wine python -m pip install setuptools wheel
+
+# Install PyInstaller
+# Not necessary, Pyinstaller is already installed in the container
+#RUN wine python -m pip install pyinstaller
+
+# Install PyQt6 explicitly first to ensure it's there
+RUN wine python -m pip install PyQt6==6.9.1 #PyQt6-Qt6 PyQt6-sip
+
+# Install Pillow for PyInstaller icon conversion
+RUN wine python -m pip install Pillow
+
+# Copy requirements and install (if there are other deps like opencv)
+COPY requirements.txt /tmp/requirements.txt
+RUN wine python -m pip install -r /tmp/requirements.txt
+
+# Set working directory
+WORKDIR /src
+
+# The command to run when the container starts
+CMD ["wine", "pyinstaller", "--clean", "--noconfirm", "tlcid.spec", "--distpath", "dist/windows", "--workpath", "build/windows"]
