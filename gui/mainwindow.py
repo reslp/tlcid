@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
                              QLabel, QPushButton, QFileDialog, QSizePolicy, QComboBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QColorDialog,
-                             QMessageBox)
+                             QMessageBox, QDoubleSpinBox)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
@@ -409,6 +409,9 @@ class MainWindow(QMainWindow):
             QColor("lime"), QColor("pink")
         ]
         
+        self.char_windows = {}    # {sid: SubstanceCharacteristicsWindow}
+        self.detail_windows = {}  # {name: SubstanceDetailWindow}
+        
         self.reference_data = [] # Cache for prediction
         self.load_reference_data() # Load DB data on startup
         
@@ -460,6 +463,15 @@ class MainWindow(QMainWindow):
         self.detection_status_label = QLabel()
         self.detection_status_label.setStyleSheet("color: gray; padding-left: 10px;")
         toolbar_layout.addWidget(self.detection_status_label)
+
+        # Inline Range control in Main Window
+        self.range_main = QDoubleSpinBox()
+        self.range_main.setRange(0.0, 1.0)
+        self.range_main.setSingleStep(0.01)
+        self.range_main.setValue(self.detection_range)
+        self.range_main.valueChanged.connect(self.on_main_range_changed)
+        toolbar_layout.addWidget(self.range_main)
+
         self.update_detection_status_label()
         
         toolbar_layout.addStretch()
@@ -648,8 +660,7 @@ class MainWindow(QMainWindow):
 
             
             # Manage window instance to prevent GC
-            if not hasattr(self, 'detail_windows'):
-                self.detail_windows = {}
+            # (initialized in __init__)
             
             # Close existing if same? Or allow multiple?
             # Let's allow multiple distinct, bring to front if same
@@ -691,10 +702,7 @@ class MainWindow(QMainWindow):
              db.setDatabaseName(db_path)
              if not db.open(): return
 
-        # Manage window
-        if not hasattr(self, 'char_windows'):
-             self.char_windows = {}
-             
+        # Manage window (initialized in __init__)
         sample_name = self.samples[sid]['name']
         current_group = self.samples[sid].get('filter_group')
         current_genus = self.samples[sid].get('filter_genus')
@@ -829,11 +837,29 @@ class MainWindow(QMainWindow):
         self.update_detection_status_label()
         self.update_results_display()
 
+    def on_main_range_changed(self, val):
+        self.detection_range = val
+        self.update_detection_status_label()
+        self.update_results_display()
+        # Sync Settings Window if open
+        if hasattr(self, 'settings_window') and self.settings_window is not None:
+            self.settings_window.range_spin.blockSignals(True)
+            self.settings_window.range_spin.setValue(val)
+            self.settings_window.range_spin.blockSignals(False)
+
     def update_detection_status_label(self):
+        is_range = (self.detection_method == "Range")
         text = f"Method: <b>{self.detection_method}</b>"
-        if self.detection_method == "Range":
-            text += f" (+/- {self.detection_range:.2f})"
+        if is_range:
+            text += " (+/-)"
         self.detection_status_label.setText(text)
+        # Show/hide the inline range spinbox based on detection method
+        if hasattr(self, 'range_main'):
+            self.range_main.setVisible(is_range)
+            # Sync spinbox value without triggering valueChanged
+            self.range_main.blockSignals(True)
+            self.range_main.setValue(self.detection_range)
+            self.range_main.blockSignals(False)
 
     def deactivate_marking_mode(self):
         for slot in self.slots:
@@ -876,10 +902,6 @@ class MainWindow(QMainWindow):
             self.deactivate_marking_mode()
     
     def update_results_display(self):
-        # Clear previous matches for all samples
-        for sdata in self.samples.values():
-            sdata['last_matches'] = []
-
         # Aggregate data from all slots
         # Map: Sample ID -> { Plate Index -> [rf1, rf2, ...] }
         aggregated = {}
@@ -914,6 +936,46 @@ class MainWindow(QMainWindow):
                 if i not in aggregated[sid]:
                     aggregated[sid][i] = []
                 aggregated[sid][i].append(rf_val)
+        
+        # Sync self.samples with aggregated data:
+        # If a sample ID is no longer in any of the plate spots (not in 'aggregated'),
+        # remove it from self.samples to clear it from the results list.
+        # We keep IDs <= 0 as they represent reference standards (Atranorin/Norstictic).
+        # Determine which substance is currently being marked (if any)
+        currently_marking_sid = None
+        if self.mark_substance_button.isChecked():
+            currently_marking_sid = self.next_sample_id - 1
+        elif self.mark_atranorin_button.isChecked():
+            currently_marking_sid = 0
+        elif self.mark_norstictic_button.isChecked():
+            currently_marking_sid = -1
+
+        ids_to_remove = []
+        for sid in self.samples:
+            if sid > 0 and sid not in aggregated and sid != currently_marking_sid:
+                ids_to_remove.append(sid)
+        
+        for sid in ids_to_remove:
+            print(f"DEBUG: Removing substance ID {sid} (no spots remaining)")
+            self.samples.pop(sid)
+            # Close any open characteristics window for this sample
+            if sid in self.char_windows:
+                try:
+                    self.char_windows[sid].close()
+                except RuntimeError:
+                    pass  # Widget already deleted by Qt
+                self.char_windows[sid].deleteLater() if sid in self.char_windows else None
+                self.char_windows.pop(sid, None)
+        
+        # Refresh global color map in slots after removal to keep synchronized
+        if ids_to_remove:
+            color_map = {k: v['color'] for k, v in self.samples.items()}
+            for slot in self.slots:
+                slot.image_label.set_global_colors(color_map)
+
+        # Clear previous matches for remaining samples
+        for sid, sdata in self.samples.items():
+            sdata['last_matches'] = []
         
         # Debug print for aggregated data
         print(f"DEBUG: Aggregated Rf values: {aggregated}")
@@ -1174,6 +1236,12 @@ class MainWindow(QMainWindow):
             # Update UI for detection settings
             self.update_detection_status_label()
             
+            # Block signals on all image labels during loading to prevent
+            # premature update_results_display calls (which would remove
+            # substances from self.samples before their spots are loaded)
+            for slot in self.slots:
+                slot.image_label.blockSignals(True)
+            
             # Determine next sample id (max id + 1)
             max_sid = 0
             
@@ -1182,7 +1250,13 @@ class MainWindow(QMainWindow):
                 sid = int(sid_str)
                 if sid > max_sid:
                     max_sid = sid
-                color = self.colors[(sid - 1) % len(self.colors)]
+                # Assign correct colors for reference standards vs substances
+                if sid == 0:
+                    color = QColor("red")       # Atranorin reference
+                elif sid == -1:
+                    color = QColor("yellow")    # Norstictic Acid reference
+                else:
+                    color = self.colors[(sid - 1) % len(self.colors)]
                 self.samples[sid] = {
                     'color': color, 
                     'name': sdata['name'],
@@ -1230,17 +1304,16 @@ class MainWindow(QMainWindow):
                             'y': s['y']
                         })
                     slot.image_label.spots = safe_spots
-                    
-                    # Trigger updates
-                    slot.image_label.update()
-                    slot.image_label.linesMoved.emit(1.0 - start_y, 1.0 - front_y)
+            
+            # Unblock signals now that all data is loaded
+            for slot in self.slots:
+                slot.image_label.blockSignals(False)
             
             # Global Updates
             color_map = {k: v['color'] for k, v in self.samples.items()}
             for slot in self.slots:
                 slot.image_label.set_global_colors(color_map)
-                # Ensure spot display is updated
-                slot.image_label.spotsChanged.emit(slot.image_label.spots)
+                slot.image_label.update()
                 
             self.update_results_display()
             
@@ -1255,6 +1328,30 @@ class MainWindow(QMainWindow):
         # Reset Controls
         if self.mark_substance_button.isChecked():
             self.mark_substance_button.click() # This will toggle it off and reset cursors
+        
+        # Close and clear all open characteristics windows
+        for sid, win in list(self.char_windows.items()):
+            try:
+                win.close()
+            except RuntimeError:
+                pass  # Widget already deleted by Qt
+            try:
+                win.deleteLater()
+            except RuntimeError:
+                pass
+        self.char_windows.clear()
+        
+        # Close and clear all open detail windows
+        for name, win in list(self.detail_windows.items()):
+            try:
+                win.close()
+            except RuntimeError:
+                pass
+            try:
+                win.deleteLater()
+            except RuntimeError:
+                pass
+        self.detail_windows.clear()
             
         # Reset Slots
         for slot in self.slots:
