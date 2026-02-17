@@ -72,10 +72,9 @@ class SquareLabel(QLabel):
     def set_image(self, pixmap):
         self._original_pixmap = pixmap
         self.show_lines = True
-        self.setText("") 
+        self.setText("")
         self.update_display()
         self.linesMoved.emit(1.0 - self.start_line_y, 1.0 - self.front_line_y)
-        self.spotsChanged.emit(self.spots)
         
     def resizeEvent(self, event):
         self.update_display()
@@ -1127,19 +1126,27 @@ class MainWindow(QMainWindow):
 
         ids_to_remove = []
         for sid in self.samples:
-            if sid > 0 and sid not in aggregated and sid != currently_marking_sid:
+            # Remove substance if it has no spots (not in aggregated)
+            # Exception: if currently being marked (button checked) AND has at least one spot,
+            # don't remove it. But if it has no spots at all, remove it even if being marked.
+            if sid > 0 and sid not in aggregated:
                 ids_to_remove.append(sid)
-        
+
+        if ids_to_remove:
+            print(f"DEBUG: Removing substances {ids_to_remove} (no spots remaining)")
+        else:
+            print(f"DEBUG: No substances to remove. aggregated={sorted(aggregated.keys())}, samples={sorted(self.samples.keys())}")
+
         for sid in ids_to_remove:
-            print(f"DEBUG: Removing substance ID {sid} (no spots remaining)")
+            print(f"DEBUG: Removing substance ID {sid}")
             self.samples.pop(sid)
             # Close any open characteristics window for this sample
             if sid in self.char_windows:
                 try:
                     self.char_windows[sid].close()
+                    self.char_windows[sid].deleteLater()
                 except RuntimeError:
                     pass  # Widget already deleted by Qt
-                self.char_windows[sid].deleteLater() if sid in self.char_windows else None
                 self.char_windows.pop(sid, None)
         
         # Refresh global color map in slots after removal to keep synchronized
