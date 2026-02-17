@@ -483,7 +483,7 @@ class MainWindow(QMainWindow):
             self.icon_label = QLabel()
             icon_pixmap = QPixmap(icon_path)
             if not icon_pixmap.isNull():
-                self.icon_label.setPixmap(icon_pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                self.icon_label.setPixmap(icon_pixmap.scaled(75, 75, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
                 toolbar_layout.addWidget(self.icon_label)
 
         main_layout.addLayout(toolbar_layout)
