@@ -1,9 +1,12 @@
 [project]
-name = "tlc-ai"
-version = "0.1.0"
+name = "tlcid"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "pillow>=12.1.1",
+    "pyinstaller>=6.18.0",
     "pyqt6>=6.10.2",
 ]
+
