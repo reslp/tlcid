@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
                              QLabel, QPushButton, QFileDialog, QSizePolicy, QComboBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QColorDialog,
-                             QMessageBox, QDoubleSpinBox)
+                             QMessageBox, QDoubleSpinBox, QDialog)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
@@ -499,17 +499,31 @@ class MainWindow(QMainWindow):
         self.update_detection_status_label()
         
         toolbar_layout.addStretch()
-        
-        # App Icon
+
+        # App Icon with TLCid text below
         import os
         base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         icon_path = os.path.join(base_path, "icon.png")
         if os.path.exists(icon_path):
+            # Create a vertical layout for icon + text
+            icon_layout = QVBoxLayout()
+            icon_layout.setSpacing(0)
+
+            # Icon
             self.icon_label = QLabel()
             icon_pixmap = QPixmap(icon_path)
             if not icon_pixmap.isNull():
                 self.icon_label.setPixmap(icon_pixmap.scaled(75, 75, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-                toolbar_layout.addWidget(self.icon_label)
+                self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                icon_layout.addWidget(self.icon_label)
+
+            # TLCid text below icon
+            self.tlcid_label = QLabel()
+            self.tlcid_label.setText("TLCid")
+            self.tlcid_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            icon_layout.addWidget(self.tlcid_label)
+
+            toolbar_layout.addLayout(icon_layout)
 
         main_layout.addLayout(toolbar_layout)
 
@@ -819,7 +833,41 @@ class MainWindow(QMainWindow):
         if os.path.exists(version_path):
             with open(version_path, 'r') as f:
                 version = f.read().strip()
-        QMessageBox.about(self, "About TLCid", f"TLCid v{version}\nCopyright by Philipp Resl 2026")
+
+        # Create custom dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("About TLCid")
+        dialog.setMinimumWidth(400)
+
+        layout = QVBoxLayout()
+        dialog.setLayout(layout)
+
+        # Add icon
+        icon_path = os.path.join(base_path, "icon.png")
+        if os.path.exists(icon_path):
+            icon_label = QLabel()
+            icon_pixmap = QPixmap(icon_path)
+            if not icon_pixmap.isNull():
+                icon_label.setPixmap(icon_pixmap.scaled(128, 128, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                layout.addWidget(icon_label)
+
+        # Add text
+        text_label = QLabel()
+        text_label.setText(f"TLCid v{version}\n\nCopyright by Philipp Resl 2026")
+        text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(text_label)
+
+        # Add close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        close_layout = QHBoxLayout()
+        close_layout.addStretch()
+        close_layout.addWidget(close_button)
+        close_layout.addStretch()
+        layout.addLayout(close_layout)
+
+        dialog.exec()
 
     def show_settings_window(self):
         from gui.settings_window import SettingsWindow
