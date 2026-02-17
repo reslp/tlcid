@@ -19,22 +19,24 @@ class SquareLabel(QLabel):
         self.setStyleSheet("border: 1px solid #ccc; background-color: #f0f0f0;")
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.setMouseTracking(True) # Enable mouse tracking for hover effects
-        
+
         # Line positions
-        self.start_line_y = 0.9 
-        self.front_line_y = 0.1 
-        self.show_lines = False 
-        
+        self.start_line_y = 0.9
+        self.front_line_y = 0.1
+        self.show_lines = False
+
         # Spot Handling
         # list of {'sample_id': int, 'x': float, 'y': float}
-        self.spots = [] 
+        self.spots = []
         self.spot_radius = 8
         self.adding_sample_mode = False
         self.current_sample_id = None
-        self.dragged_spot_index = None 
+        self.dragged_spot_index = None
         self.global_colors = {}
         self.global_names = {}
-        
+        self.global_font_sizes = {}  # Map: sample_id -> font_size for on-plate labels
+        self.highlighted_samples = set()  # Set of sample IDs that should be highlighted
+
         # Line Dragging State
         self.dragged_line = None # "Start" or "Front"
 
@@ -43,6 +45,14 @@ class SquareLabel(QLabel):
 
     def set_global_names(self, names):
         self.global_names = names
+        self.update()
+
+    def set_global_font_sizes(self, font_sizes):
+        self.global_font_sizes = font_sizes
+        self.update()
+
+    def set_highlighted_samples(self, highlighted_sids):
+        self.highlighted_samples = set(highlighted_sids)
         self.update()
 
     def hasHeightForWidth(self):
@@ -72,20 +82,17 @@ class SquareLabel(QLabel):
         super().resizeEvent(event)
         
     def mouseMoveEvent(self, event):
-        if not self.show_lines:
-            return
-
         x_norm = event.position().x() / self.width()
         y_norm = event.position().y() / self.height()
         x_norm = max(0.0, min(1.0, x_norm))
         y_norm = max(0.0, min(1.0, y_norm))
-        
-        # Cursor feedback for lines
-        if not self.adding_sample_mode and self.dragged_spot_index is None and self.dragged_line is None:
+
+        # Cursor feedback for lines (only when show_lines is True)
+        if self.show_lines and not self.adding_sample_mode and self.dragged_spot_index is None and self.dragged_line is None:
             start_px = self.start_line_y * self.height()
             front_px = self.front_line_y * self.height()
             click_y = event.position().y()
-            
+
             if abs(click_y - start_px) < 10 or abs(click_y - front_px) < 10:
                 self.setCursor(Qt.CursorShape.SplitVCursor)
             else:
@@ -96,25 +103,23 @@ class SquareLabel(QLabel):
             self.spots[self.dragged_spot_index]['y'] = y_norm
             self.update()
             self.spotsChanged.emit(self.spots)
-            
+
         elif self.dragged_line is not None:
-             # Dragging a line
-            if self.dragged_line == "Start":
-                self.start_line_y = y_norm
-            elif self.dragged_line == "Front":
-                self.front_line_y = y_norm
-            self.update() 
-            self.linesMoved.emit(1.0 - self.start_line_y, 1.0 - self.front_line_y)
+             # Dragging a line (only when show_lines is True)
+            if self.show_lines:
+                if self.dragged_line == "Start":
+                    self.start_line_y = y_norm
+                elif self.dragged_line == "Front":
+                    self.front_line_y = y_norm
+                self.update()
+                self.linesMoved.emit(1.0 - self.start_line_y, 1.0 - self.front_line_y)
 
     def mousePressEvent(self, event):
-        if not self.show_lines:
-            return
-
         if event.button() == Qt.MouseButton.RightButton:
             # Right click to remove
             click_x = event.position().x()
             click_y = event.position().y()
-            
+
             for i, spot in enumerate(self.spots):
                 px = spot['x'] * self.width()
                 py = spot['y'] * self.height()
@@ -174,11 +179,11 @@ class SquareLabel(QLabel):
             
             if clicked_idx is not None:
                 self.dragged_spot_index = clicked_idx
-            else:
-                 # 2. Line Hit
+            elif self.show_lines:
+                # 2. Line Hit (only when show_lines is True)
                 start_px = self.start_line_y * self.height()
                 front_px = self.front_line_y * self.height()
-                
+
                 if abs(click_y - start_px) < 10:
                     self.dragged_line = "Start"
                     self.setCursor(Qt.CursorShape.SplitVCursor)
@@ -196,36 +201,54 @@ class SquareLabel(QLabel):
 
     def paintEvent(self, event):
         super().paintEvent(event)
+        painter = QPainter(self)
+
+        # Draw Lines (conditional)
         if self.show_lines:
-            painter = QPainter(self)
-            
-            # Draw Lines
             painter.setPen(QPen(QColor("green"), 2))
             start_y = int(self.start_line_y * self.height())
             painter.drawLine(0, start_y, self.width(), start_y)
-            
+
             painter.setPen(QPen(QColor("red"), 2))
             front_y = int(self.front_line_y * self.height())
             painter.drawLine(0, front_y, self.width(), front_y)
-            
-            # Draw Spots
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            for spot in self.spots:
-                sid = spot['sample_id']
-                color = self.global_colors.get(sid, QColor("black"))
-                painter.setPen(QPen(color, 2))
-                
+
+        # Draw Spots (unconditional)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for spot in self.spots:
+            sid = spot['sample_id']
+            color = self.global_colors.get(sid, QColor("white"))
+
+            # Check if this sample is highlighted (characteristics window is open)
+            is_highlighted = sid in self.highlighted_samples
+
+            # Draw highlighted spots with a thicker border and different style
+            if is_highlighted:
+                # Draw outer highlight ring (dashed, wider)
+                print(f"DEBUG: Highlight: {spot}")
+                highlight_pen = QPen(QColor("white"), 4)
+                highlight_pen.setStyle(Qt.PenStyle.DashLine)
+                painter.setPen(highlight_pen)
                 px = int(spot['x'] * self.width())
                 py = int(spot['y'] * self.height())
-                painter.drawEllipse(px - self.spot_radius, py - self.spot_radius, 
-                                    self.spot_radius * 2, self.spot_radius * 2)
-                
-                name = self.global_names.get(sid)
-                if name:
-                    font = painter.font()
-                    font.setPointSize(8)
-                    painter.setFont(font)
-                    painter.drawText(px + self.spot_radius + 5, py - 5, name)
+                painter.drawEllipse(px - self.spot_radius - 4 , py - self.spot_radius - 4,
+                                    (self.spot_radius + 4) * 2, (self.spot_radius + 4) * 2)
+
+            # Draw the main spot circle
+            painter.setPen(QPen(color, 2 if not is_highlighted else 3))
+            px = int(spot['x'] * self.width())
+            py = int(spot['y'] * self.height())
+            painter.drawEllipse(px - self.spot_radius, py - self.spot_radius,
+                                self.spot_radius * 2, self.spot_radius * 2)
+
+            name = self.global_names.get(sid)
+            if name:
+                font = painter.font()
+                # Use per-sample font size if available, otherwise default to 8
+                font_size = self.global_font_sizes.get(sid, 8)
+                font.setPointSize(font_size)
+                painter.setFont(font)
+                painter.drawText(px + self.spot_radius + 5, py - 5, name)
 
     def update_display(self):
         if self._original_pixmap and not self._original_pixmap.isNull():
@@ -362,16 +385,18 @@ class ImageSlot(QWidget):
             sid = spot['sample_id']
             color = colors.get(sid, QColor("black"))
             painter.setPen(QPen(color, spot_pen_width))
-            
+
             px = widget_norm_to_image_px(spot['x'], is_y=False)
             py = widget_norm_to_image_px(spot['y'], is_y=True)
-            
+
             painter.drawEllipse(px - spot_radius, py - spot_radius, spot_radius * 2, spot_radius * 2)
-            
+
             name = self.image_label.global_names.get(sid)
             if name:
                 font = painter.font()
-                font.setPointSize(int(9 * scale_factor))
+                # Use per-sample font size if available, otherwise default
+                font_size = self.image_label.global_font_sizes.get(sid, 9)
+                font.setPointSize(int(font_size * scale_factor))
                 painter.setFont(font)
                 painter.drawText(px + spot_radius + int(5 * scale_factor), py - int(5 * scale_factor), name)
             
@@ -689,10 +714,10 @@ class MainWindow(QMainWindow):
     def open_characteristics_window(self, sid):
         if sid not in self.samples:
             return
-            
+
         from gui.substance_characteristics_window import SubstanceCharacteristicsWindow
         from PyQt6.QtSql import QSqlDatabase
-        
+
         # Ensure DB connection
         if QSqlDatabase.contains("qt_sql_default_connection"):
             db = QSqlDatabase.database()
@@ -709,16 +734,17 @@ class MainWindow(QMainWindow):
         sample_name = self.samples[sid]['name']
         current_group = self.samples[sid].get('filter_group')
         current_genus = self.samples[sid].get('filter_genus')
-        
+
         current_vis = self.samples[sid].get('filter_vis', False)
         current_uvs = self.samples[sid].get('filter_uvs', False)
         current_uvl = self.samples[sid].get('filter_uvl', False)
         current_aft_vis = self.samples[sid].get('filter_aft_vis')
         current_aft_uv = self.samples[sid].get('filter_aft_uv')
-        
+
         assigned_name = self.samples[sid].get('assigned_name')
         candidates = self.samples[sid].get('last_matches', [])
         show_on_plate = self.samples[sid].get('show_on_plate', False)
+        font_size = self.samples[sid].get('font_size', 8)
 
         # Unique key? sid is unique.
         if sid in self.char_windows and self.char_windows[sid].isVisible():
@@ -726,15 +752,36 @@ class MainWindow(QMainWindow):
             self.char_windows[sid].activateWindow()
             return
 
-        window = SubstanceCharacteristicsWindow(sid, sample_name, current_group, current_genus, 
-                                                current_vis, current_uvs, current_uvl, 
-                                                current_aft_vis, current_aft_uv, 
-                                                assigned_name, candidates, show_on_plate, db)
+        window = SubstanceCharacteristicsWindow(sid, sample_name, current_group, current_genus,
+                                                current_vis, current_uvs, current_uvl,
+                                                current_aft_vis, current_aft_uv,
+                                                assigned_name, candidates, show_on_plate, font_size, db)
         window.filterChanged.connect(self.set_sample_filter)
+        window.finished.connect(lambda: self.on_characteristics_window_closed(sid))
         self.char_windows[sid] = window
         window.show()
+        self.update_highlighting()  # Update highlighting when window is open
 
-    def set_sample_filter(self, sid, group_name, genus, is_vis, is_uvs, is_uvl, aft_vis, aft_uv, assigned_name, show_on_plate):
+    def on_characteristics_window_closed(self, sid):
+        """Called when a characteristics window is closed."""
+        self.update_highlighting()  # Update highlighting when window closes
+
+    def update_highlighting(self):
+        """Update the highlighting state for all spots based on open characteristics windows."""
+        # Collect all open window SIDs
+        open_sids = set()
+        for sid, win in self.char_windows.items():
+            print(f"DEBUG: {sid}, {win}")
+            print(f"DEBUG: {win.isVisible()}")
+            if win and win.isVisible():
+                open_sids.add(sid)
+        print(f"DEBUG: OPEN_SIDS:{open_sids}")
+
+        # Update each slot's highlighted samples
+        for slot in self.slots:
+            slot.image_label.set_highlighted_samples(open_sids)
+
+    def set_sample_filter(self, sid, group_name, genus, is_vis, is_uvs, is_uvl, aft_vis, aft_uv, assigned_name, show_on_plate, font_size):
         if sid in self.samples:
             self.samples[sid]['filter_group'] = group_name
             self.samples[sid]['filter_genus'] = genus
@@ -745,6 +792,7 @@ class MainWindow(QMainWindow):
             self.samples[sid]['filter_aft_uv'] = aft_uv
             self.samples[sid]['assigned_name'] = assigned_name
             self.samples[sid]['show_on_plate'] = show_on_plate
+            self.samples[sid]['font_size'] = font_size
             self.update_results_display()
 
     def ensure_single_mode(self, active_btn):
@@ -1218,15 +1266,18 @@ class MainWindow(QMainWindow):
         self.results_table.verticalScrollBar().setValue(v_scroll)
         self.results_table.horizontalScrollBar().setValue(h_scroll)
 
-        # Update Name Mapping in slots
+        # Update Name Mapping and Font Sizes in slots
         name_map = {}
+        font_size_map = {}
         for sid, sdata in self.samples.items():
             if sdata.get('show_on_plate', False):
                 assigned = sdata.get('assigned_name')
                 name_map[sid] = assigned if assigned else sdata['name']
-        
+                font_size_map[sid] = sdata.get('font_size', 8)
+
         for slot in self.slots:
             slot.image_label.set_global_names(name_map)
+            slot.image_label.set_global_font_sizes(font_size_map)
             
     def load_examples(self):
         import os
@@ -1272,7 +1323,8 @@ class MainWindow(QMainWindow):
                 "filter_uvs": sdata.get('filter_uvs', False),
                 "filter_uvl": sdata.get('filter_uvl', False),
                 "filter_aft_vis": sdata.get('filter_aft_vis'),
-                "filter_aft_uv": sdata.get('filter_aft_uv')
+                "filter_aft_uv": sdata.get('filter_aft_uv'),
+                "font_size": sdata.get('font_size', 8)
             }
             
         # Save Plates
@@ -1339,7 +1391,7 @@ class MainWindow(QMainWindow):
                 else:
                     color = self.colors[(sid - 1) % len(self.colors)]
                 self.samples[sid] = {
-                    'color': color, 
+                    'color': color,
                     'name': sdata['name'],
                     'assigned_name': sdata.get('assigned_name'),
                     'show_on_plate': sdata.get('show_on_plate', False),
@@ -1349,7 +1401,8 @@ class MainWindow(QMainWindow):
                     'filter_uvs': sdata.get('filter_uvs', False),
                     'filter_uvl': sdata.get('filter_uvl', False),
                     'filter_aft_vis': sdata.get('filter_aft_vis'),
-                    'filter_aft_uv': sdata.get('filter_aft_uv')
+                    'filter_aft_uv': sdata.get('filter_aft_uv'),
+                    'font_size': sdata.get('font_size', 8)
                 }
             
             self.next_sample_id = max_sid + 1

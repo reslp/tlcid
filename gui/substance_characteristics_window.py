@@ -1,17 +1,17 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtSql import QSqlQuery
 
 class SubstanceCharacteristicsWindow(QDialog):
-    # sample_id, group_name, genus, bef_vis, bef_uvs, bef_uvl, aft_vis, aft_uv, assigned_name, show_on_plate
-    filterChanged = pyqtSignal(int, str, str, bool, bool, bool, str, str, str, bool)
+    # sample_id, group_name, genus, bef_vis, bef_uvs, bef_uvl, aft_vis, aft_uv, assigned_name, show_on_plate, font_size
+    filterChanged = pyqtSignal(int, str, str, bool, bool, bool, str, str, str, bool, int)
 
-    def __init__(self, sample_id, sample_name, current_group, current_genus, 
-                 current_vis, current_uvs, current_uvl, 
-                 current_aft_vis, current_aft_uv, assigned_name, candidates, show_on_plate, db):
+    def __init__(self, sample_id, sample_name, current_group, current_genus,
+                 current_vis, current_uvs, current_uvl,
+                 current_aft_vis, current_aft_uv, assigned_name, candidates, show_on_plate, font_size, db):
         super().__init__()
         self.setWindowTitle(f"Characteristics: {sample_name}")
-        self.resize(400, 750)
+        self.resize(400, 800)
         self.sample_id = sample_id
         self.db = db
         
@@ -98,6 +98,21 @@ class SubstanceCharacteristicsWindow(QDialog):
         self.check_show_name.stateChanged.connect(self.on_change)
         layout.addWidget(self.check_show_name)
 
+        layout.addWidget(QLabel("<hr>"))
+
+        # Font Size for On-Plate Label
+        layout.addWidget(QLabel(f"<b>Font Size for On-Plate Label:</b>"))
+
+        # Use a horizontal layout to make spinbox occupy 33% of width
+        font_layout = QHBoxLayout()
+        self.spin_font_size = QSpinBox()
+        self.spin_font_size.setRange(6, 36)
+        self.spin_font_size.setValue(font_size if font_size else 8)
+        self.spin_font_size.valueChanged.connect(self.on_change)
+        font_layout.addWidget(self.spin_font_size, stretch=1)  # 1/8 of the space
+        font_layout.addStretch(stretch=7)  # 7/8 of the space
+        layout.addLayout(font_layout)
+
         layout.addStretch()
         
         # Close button
@@ -173,13 +188,14 @@ class SubstanceCharacteristicsWindow(QDialog):
         is_uvl = self.check_uvl.isChecked()
         aft_vis = self.combo_aft_vis.currentData()
         aft_uv = self.combo_aft_uv.currentData()
-        
+
         assigned_name = self.combo_assigned.currentText()
         if self.combo_assigned.currentIndex() == 0 and assigned_name == "Default (Substance X)":
             assigned_name = None
-            
-        show_on_plate = self.check_show_name.isChecked()
 
-        self.filterChanged.emit(self.sample_id, group_data, genus_data, 
+        show_on_plate = self.check_show_name.isChecked()
+        font_size = self.spin_font_size.value()
+
+        self.filterChanged.emit(self.sample_id, group_data, genus_data,
                                 is_vis, is_uvs, is_uvl,
-                                aft_vis, aft_uv, assigned_name, show_on_plate)
+                                aft_vis, aft_uv, assigned_name, show_on_plate, font_size)
