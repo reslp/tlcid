@@ -1,7 +1,7 @@
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QLabel, QPushButton, QFileDialog, QSizePolicy, QComboBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QColorDialog,
-                             QMessageBox, QDoubleSpinBox, QDialog)
+                             QMessageBox, QDoubleSpinBox, QDialog, QCheckBox, QWidget as QWidget2)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
@@ -543,27 +543,31 @@ class MainWindow(QMainWindow):
         # Results Display
         # Results Display using QTableWidget
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(6)
-        self.results_table.setHorizontalHeaderLabels(["Color", "Substance", "Plate A", "Plate B'", "Plate C", "Predictions"])
+        self.results_table.setColumnCount(7)
+        self.results_table.setHorizontalHeaderLabels(["Color", "Substance", "Plate A", "Plate B'", "Plate C", "Predictions", "Reference"])
         
         # Column Resizing Logic
         header = self.results_table.horizontalHeader()
-        
+
         # 0: Color (Fixed, Small)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self.results_table.setColumnWidth(0, 50)
-        
+
         # 1: Substance (Interactive/Stretch?) - Let's use Interactive defaults but set width
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         self.results_table.setColumnWidth(1, 150)
-        
+
         # 2, 3, 4: Plates (Fixed, Small - ~1/5 of typical width)
         for i in [2, 3, 4]:
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
             self.results_table.setColumnWidth(i, 60)
-            
+
         # 5: Predictions (Fill remaining space)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+
+        # 6: Reference (Fixed, Small)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self.results_table.setColumnWidth(6, 70)
         
         # Ensure horizontal scrolling is possible
         self.results_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -584,6 +588,80 @@ class MainWindow(QMainWindow):
                 sid = item.data(Qt.ItemDataRole.UserRole)
                 if sid is not None:
                      self.change_sample_color(sid)
+
+    def handle_reference_checkbox(self, state, sid):
+        """Handle when the reference checkbox is toggled."""
+        if sid not in self.samples:
+            return
+
+        # Update the sample data
+        self.samples[sid]['is_reference'] = (state == 2)  # Qt.CheckState.Checked == 2
+
+        # If checked, load the reference Rf values from database
+        if self.samples[sid]['is_reference']:
+            assigned_name = self.samples[sid].get('assigned_name')
+            if not assigned_name:
+                # Use first predicted match if no assigned name
+                matches = self.samples[sid].get('last_matches', [])
+                if matches:
+                    assigned_name = matches[0]
+
+            if assigned_name:
+                ref_rf = self.get_substance_rf_from_db(assigned_name)
+                if ref_rf:
+                    self.samples[sid]['reference_rf'] = ref_rf
+                    print(f"DEBUG: Substance {sid} marked as reference with name '{assigned_name}' and Rf: {ref_rf}")
+                else:
+                    print(f"DEBUG: Could not find Rf values for '{assigned_name}' in database")
+                    self.samples[sid]['reference_rf'] = None
+            else:
+                print(f"DEBUG: Substance {sid} has no assigned name, cannot be reference")
+                self.samples[sid]['is_reference'] = False
+                # Uncheck the checkbox
+                checkbox = self.results_table.cellWidget(row, 6)
+                if checkbox:
+                    checkbox.blockSignals(True)
+                    checkbox.setChecked(False)
+                    checkbox.blockSignals(False)
+                self.samples[sid]['reference_rf'] = None
+        else:
+            self.samples[sid]['reference_rf'] = None
+            print(f"DEBUG: Substance {sid} unmarked as reference")
+
+        # Update calibration and results
+        self.update_results_display()
+
+    def get_substance_rf_from_db(self, name):
+        """Look up Rf values from the database for a given substance name."""
+        from PyQt6.QtSql import QSqlDatabase, QSqlQuery
+
+        if not QSqlDatabase.contains("main_ref_connection"):
+            return None
+
+        db = QSqlDatabase.database("main_ref_connection")
+        if not db.isOpen():
+            return None
+
+        query = QSqlQuery(db)
+        query.prepare("SELECT A, Bprime, C FROM Substances WHERE name = :name")
+        query.bindValue(":name", name)
+
+        if query.exec() and query.next():
+            def parse_rf(val):
+                if val is None or val == "":
+                    return None
+                try:
+                    return float(val) / 100.0
+                except:
+                    return None
+
+            rf_a = parse_rf(query.value(0))
+            rf_b = parse_rf(query.value(1))
+            rf_c = parse_rf(query.value(2))
+
+            return [rf_a, rf_b, rf_c]
+
+        return None
 
     def change_sample_color(self, sid):
         if sid not in self.samples:
@@ -1180,21 +1258,61 @@ class MainWindow(QMainWindow):
         # Calibration Logic
         # Gather Active Standards per Plate
         active_standards = {0: [], 1: [], 2: []}
-        
+
         # Check Atranorin (0)
         if 0 in aggregated:
              for idx, vals in aggregated[0].items():
                  if vals and idx in self.atranorin_standards:
                      active_standards[idx].append((vals[0], self.atranorin_standards[idx]))
-                     
+
         # Check Norstictic (-1)
         if -1 in aggregated:
              for idx, vals in aggregated[-1].items():
                  if vals and idx in self.norstictic_standards:
                      active_standards[idx].append((vals[0], self.norstictic_standards[idx]))
 
+        # Check additional reference substances (sid > 0 with is_reference flag)
+        for sid, sdata in self.samples.items():
+            if sid > 0 and sdata.get('is_reference', False) and sid in aggregated:
+                ref_rf = sdata.get('reference_rf')
+                if ref_rf:
+                    for idx, vals in aggregated[sid].items():
+                        if vals and idx < len(ref_rf) and ref_rf[idx] is not None:
+                            active_standards[idx].append((vals[0], ref_rf[idx]))
+                            print(f"DEBUG: Added reference substance {sid} (name: {sdata.get('assigned_name')}) to plate {idx} calibration: observed={vals[0]:.3f}, std={ref_rf[idx]:.3f}")
+
         for idx in active_standards:
             active_standards[idx].sort(key=lambda x: x[0])
+
+        # Debug output: Show which reference substances are used for each plate
+        print("=" * 80)
+        print("CALIBRATION REFERENCE SUBSTANCES PER PLATE")
+        print("=" * 80)
+        for idx in [0, 1, 2]:
+            standards = active_standards[idx]
+            print(f"\nPlate {['A', "B", 'C'][idx]}:")
+            if not standards:
+                print("  No reference standards active - using raw Rf values")
+            else:
+                print("  Calibration points (observed Rf -> standard Rf):")
+                # Identify which reference substances are being used
+                for obs, std in standards:
+                    # Identify which standard this is
+                    std_name = "Unknown"
+                    if std in self.atranorin_standards.values():
+                        std_name = "Atranorin"
+                    elif std in self.norstictic_standards.values():
+                        std_name = "Norstictic Acid"
+                    else:
+                        # Check if it's a user-defined reference substance
+                        for sid, sdata in self.samples.items():
+                            if sdata.get('is_reference', False) and sdata.get('reference_rf'):
+                                ref_rf = sdata['reference_rf']
+                                if idx < len(ref_rf) and ref_rf[idx] == std:
+                                    std_name = sdata.get('assigned_name', f"Substance {sid}")
+                                    break
+                    print(f"    {std_name}: {obs:.3f} -> {std:.3f}")
+        print("=" * 80)
 
         # Store Scroll Position
         v_scroll = self.results_table.verticalScrollBar().value()
@@ -1203,7 +1321,12 @@ class MainWindow(QMainWindow):
         # Render to Table
         self.results_table.setRowCount(0)
         sorted_ids = sorted(aggregated.keys())
-        
+
+        # Print debug header for predictions
+        print("=" * 80)
+        print("SUBSTANCE PREDICTIONS")
+        print("=" * 80)
+
         for sid in sorted_ids:
             if sid not in self.samples:
                 continue 
@@ -1239,20 +1362,24 @@ class MainWindow(QMainWindow):
             plate_data = aggregated[sid]
             prediction_input = {}
             current_filter = None
-            
+
+            # Collect calibration info for this substance
+            calibration_info = []
+
             for plate_idx, label in enumerate(self.plate_labels):
                 col_idx = 2 + plate_idx
-                
+
                 val_str = "-"
                 if plate_idx in plate_data:
                     raw_val = plate_data[plate_idx][0]
-                    
+
                     # Apply Linear Interpolation Calibration
                     standards = active_standards.get(plate_idx, [])
                     # Include boundary points (0,0) and (1,1)
                     points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
-                    
+
                     corrected_val = raw_val # Default
+                    used_standards = []
                     for j in range(len(points) - 1):
                         x1, y1 = points[j]
                         x2, y2 = points[j+1]
@@ -1261,14 +1388,68 @@ class MainWindow(QMainWindow):
                                 corrected_val = y1 + (raw_val - x1) * (y2 - y1) / (x2 - x1)
                             else:
                                 corrected_val = y1
+                            # Identify which standards were used for this calibration
+                            for k in range(len(standards)):
+                                if standards[k] == points[j]:
+                                    std_obs, std_val = standards[k]
+                                    # Identify standard name
+                                    if std_val in self.atranorin_standards.values():
+                                        std_name = "Atranorin"
+                                    elif std_val in self.norstictic_standards.values():
+                                        std_name = "Norstictic Acid"
+                                    else:
+                                        # Check user-defined reference substances
+                                        std_name = "Unknown"
+                                        for ref_sid, sdata in self.samples.items():
+                                            if sdata.get('is_reference', False) and sdata.get('reference_rf'):
+                                                ref_rf = sdata['reference_rf']
+                                                if plate_idx < len(ref_rf) and ref_rf[plate_idx] == std_val:
+                                                    std_name = sdata.get('assigned_name', f"Substance {ref_sid}")
+                                                    break
+                                    used_standards.append(std_name)
+                                if standards[k] == points[j+1]:
+                                    std_obs, std_val = standards[k]
+                                    if std_val in self.atranorin_standards.values():
+                                        std_name = "Atranorin"
+                                    elif std_val in self.norstictic_standards.values():
+                                        std_name = "Norstictic Acid"
+                                    else:
+                                        std_name = "Unknown"
+                                        for ref_sid, sdata in self.samples.items():
+                                            if sdata.get('is_reference', False) and sdata.get('reference_rf'):
+                                                ref_rf = sdata['reference_rf']
+                                                if plate_idx < len(ref_rf) and ref_rf[plate_idx] == std_val:
+                                                    std_name = sdata.get('assigned_name', f"Substance {ref_sid}")
+                                                    break
+                                    used_standards.append(std_name)
                             break
-                    
+
                     prediction_input[plate_idx] = corrected_val
                     val_str = f"{corrected_val:.2f}"
-                
+
+                    # Record calibration info for this plate
+                    calibration_info.append({
+                        'plate': label,
+                        'raw': raw_val,
+                        'corrected': corrected_val,
+                        'standards': used_standards
+                    })
+
                 item = QTableWidgetItem(val_str)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.results_table.setItem(current_row, col_idx, item)
+
+            # Print debug output for this substance's calibration
+            if sid > 0 and calibration_info:
+                print(f"\nSubstance: {self.samples[sid].get('assigned_name') or self.samples[sid]['name']}")
+                print("-" * 80)
+                for cal in calibration_info:
+                    print(f"  Plate {cal['plate']}: Rf raw={cal['raw']:.3f} -> corrected={cal['corrected']:.3f}")
+                    if cal['standards']:
+                        print(f"    Calibration based on: {', '.join(cal['standards'])}")
+                    else:
+                        print(f"    No calibration applied (no reference standards)")
+                print("-" * 80)
             
             # 3. Predictions
             matches = []
@@ -1280,16 +1461,26 @@ class MainWindow(QMainWindow):
                 f_uvl = self.samples[sid].get('filter_uvl', False)
                 f_aft_vis = self.samples[sid].get('filter_aft_vis')
                 f_aft_uv = self.samples[sid].get('filter_aft_uv')
-                
-                matches = self.predict_matches(prediction_input, 
-                                               filter_group=current_filter, 
+
+                matches = self.predict_matches(prediction_input,
+                                               filter_group=current_filter,
                                                filter_genus=current_genus,
                                                filter_vis=f_vis,
                                                filter_uvs=f_uvs,
                                                filter_uvl=f_uvl,
                                                filter_aft_vis=f_aft_vis,
                                                filter_aft_uv=f_aft_uv)
-            
+
+                # Print prediction results
+                print(f"  Predictions ({len(matches)} match{'es' if len(matches) != 1 else ''}):")
+                if matches:
+                    for i, match in enumerate(matches[:10], 1):  # Show first 10
+                        print(f"    {i}. {match}")
+                    if len(matches) > 10:
+                        print(f"    ... and {len(matches) - 10} more")
+                else:
+                    print(f"    No matches found")
+
             pred_label = QLabel()
             self.samples[sid]['last_matches'] = matches
             if matches:
@@ -1316,7 +1507,29 @@ class MainWindow(QMainWindow):
                 
             pred_label.setContentsMargins(5, 0, 5, 0)
             self.results_table.setCellWidget(current_row, 5, pred_label)
-            
+
+            # 4. Reference Checkbox (Column 6)
+            # Only allow marking as reference for positive substance IDs (sid > 0)
+            if sid > 0:
+                ref_container = QWidget2()
+                ref_layout = QHBoxLayout(ref_container)
+                ref_layout.setContentsMargins(0, 0, 0, 0)
+                ref_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                ref_checkbox = QCheckBox()
+                ref_checkbox.setChecked(self.samples[sid].get('is_reference', False))
+                # Store row number in checkbox for later use
+                ref_checkbox.setProperty('row', current_row)
+                ref_checkbox.stateChanged.connect(lambda state, sid=sid, row=current_row: self.handle_reference_checkbox(state, sid))
+
+                ref_layout.addWidget(ref_checkbox)
+                self.results_table.setCellWidget(current_row, 6, ref_container)
+            else:
+                # Reference standards (Atranorin, Norstictic) don't need checkboxes
+                empty_label = QLabel()
+                empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.results_table.setCellWidget(current_row, 6, empty_label)
+
         # Restore Scroll Position
         self.results_table.verticalScrollBar().setValue(v_scroll)
         self.results_table.horizontalScrollBar().setValue(h_scroll)
@@ -1333,7 +1546,13 @@ class MainWindow(QMainWindow):
         for slot in self.slots:
             slot.image_label.set_global_names(name_map)
             slot.image_label.set_global_font_sizes(font_size_map)
-            
+
+        # Print closing summary
+        print("=" * 80)
+        print(f"PREDICTION COMPLETE: Processed {len([sid for sid in sorted_ids if sid > 0])} substances")
+        print("=" * 80)
+        print()
+
     def load_examples(self):
         import os
         base_path = os.path.dirname(os.path.abspath(__file__))
@@ -1368,7 +1587,7 @@ class MainWindow(QMainWindow):
         
         # Save Samples (only need ID and name, color can be deterministic)
         for sid, sdata in self.samples.items():
-            data["samples"][sid] = {
+            sample_data = {
                 "name": sdata["name"],
                 "assigned_name": sdata.get('assigned_name'),
                 "show_on_plate": sdata.get('show_on_plate', False),
@@ -1379,8 +1598,11 @@ class MainWindow(QMainWindow):
                 "filter_uvl": sdata.get('filter_uvl', False),
                 "filter_aft_vis": sdata.get('filter_aft_vis'),
                 "filter_aft_uv": sdata.get('filter_aft_uv'),
-                "font_size": sdata.get('font_size', 8)
+                "font_size": sdata.get('font_size', 8),
+                "is_reference": sdata.get('is_reference', False),
+                "reference_rf": sdata.get('reference_rf')
             }
+            data["samples"][sid] = sample_data
             
         # Save Plates
         for i, slot in enumerate(self.slots):
@@ -1457,7 +1679,9 @@ class MainWindow(QMainWindow):
                     'filter_uvl': sdata.get('filter_uvl', False),
                     'filter_aft_vis': sdata.get('filter_aft_vis'),
                     'filter_aft_uv': sdata.get('filter_aft_uv'),
-                    'font_size': sdata.get('font_size', 8)
+                    'font_size': sdata.get('font_size', 8),
+                    'is_reference': sdata.get('is_reference', False),
+                    'reference_rf': sdata.get('reference_rf')
                 }
             
             self.next_sample_id = max_sid + 1
