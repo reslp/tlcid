@@ -486,6 +486,30 @@ class MainWindow(QMainWindow):
             1: 0.32, # Bprime
             2: 0.30  # C
         }
+        # ID -2: Rhizocarpic Acid (A=67, B=41, C=65)
+        self.rhizocarpic_standards = {
+            0: 0.67, # A
+            1: 0.41, # Bprime
+            2: 0.65  # C
+        }
+        # ID -3: Lecanoric Acid (A=28, B=44, C=22)
+        self.lecanoric_standards = {
+            0: 0.28, # A
+            1: 0.44, # Bprime
+            2: 0.22  # C
+        }
+        # ID -4: Evernic Acid (A=38, B=60, C=43)
+        self.evernic_standards = {
+            0: 0.38, # A
+            1: 0.60, # Bprime
+            2: 0.43  # C
+        }
+        # ID -5: Zeorin (hopane-6α,22-diol) (A=52, B=43, C=43)
+        self.zeorin_standards = {
+            0: 0.52, # A
+            1: 0.43, # Bprime
+            2: 0.43  # C
+        }
 
         # Detection Settings
         self.detection_method = "Range"
@@ -505,40 +529,82 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout()
         main_widget.setLayout(main_layout)
 
-        # Toolbar Area
-        toolbar_layout = QHBoxLayout()
+        # Toolbar Area - Main horizontal layout with two columns
+        toolbar_hlayout = QHBoxLayout()
         
-        self.mark_substance_button = QPushButton("Mark Substance")
-        self.mark_substance_button.setCheckable(True)
-        self.mark_substance_button.clicked.connect(self.toggle_mark_substance)
-        toolbar_layout.addWidget(self.mark_substance_button)
+        # Left column: toolbar controls in three rows
+        toolbar_left_col = QVBoxLayout()
+        toolbar_left_col.setSpacing(5)
+        
+        # Row 1: All buttons for marking reference substances
+        row1_layout = QHBoxLayout()
+        row1_layout.setSpacing(5)
         
         self.mark_atranorin_button = QPushButton("Mark Atranorin")
         self.mark_atranorin_button.setCheckable(True)
         self.mark_atranorin_button.clicked.connect(self.toggle_mark_atranorin)
-        toolbar_layout.addWidget(self.mark_atranorin_button)
+        row1_layout.addWidget(self.mark_atranorin_button)
         
         self.mark_norstictic_button = QPushButton("Mark Norstictic")
         self.mark_norstictic_button.setCheckable(True)
         self.mark_norstictic_button.clicked.connect(self.toggle_mark_norstictic)
-        toolbar_layout.addWidget(self.mark_norstictic_button)
+        row1_layout.addWidget(self.mark_norstictic_button)
 
+        self.mark_rhizocarpic_button = QPushButton("Mark Rhizocarpic Acid")
+        self.mark_rhizocarpic_button.setCheckable(True)
+        self.mark_rhizocarpic_button.clicked.connect(self.toggle_mark_rhizocarpic)
+        row1_layout.addWidget(self.mark_rhizocarpic_button)
+
+        self.mark_lecanoric_button = QPushButton("Mark Lecanoric Acid")
+        self.mark_lecanoric_button.setCheckable(True)
+        self.mark_lecanoric_button.clicked.connect(self.toggle_mark_lecanoric)
+        row1_layout.addWidget(self.mark_lecanoric_button)
+
+        self.mark_evernic_button = QPushButton("Mark Evernic Acid")
+        self.mark_evernic_button.setCheckable(True)
+        self.mark_evernic_button.clicked.connect(self.toggle_mark_evernic)
+        row1_layout.addWidget(self.mark_evernic_button)
+
+        self.mark_zeorin_button = QPushButton("Mark Zeorin")
+        self.mark_zeorin_button.setCheckable(True)
+        self.mark_zeorin_button.clicked.connect(self.toggle_mark_zeorin)
+        row1_layout.addWidget(self.mark_zeorin_button)
+        
+        row1_layout.addStretch()
+        toolbar_left_col.addLayout(row1_layout)
+        
+        # Row 2: "Mark Substance" button
+        row2_layout = QHBoxLayout()
+        row2_layout.setSpacing(5)
+        
+        self.mark_substance_button = QPushButton("Mark Substance")
+        self.mark_substance_button.setCheckable(True)
+        self.mark_substance_button.clicked.connect(self.toggle_mark_substance)
+        row2_layout.addWidget(self.mark_substance_button)
+        
+        row2_layout.addStretch()
+        toolbar_left_col.addLayout(row2_layout)
+        
+        # Row 3: Label with Method and Calibration settings dropdown menu
+        row3_layout = QHBoxLayout()
+        row3_layout.setSpacing(5)
+        
         # Detection Status Label
         self.detection_status_label = QLabel()
         self.detection_status_label.setStyleSheet("color: gray; padding-left: 10px;")
-        toolbar_layout.addWidget(self.detection_status_label)
+        row3_layout.addWidget(self.detection_status_label)
 
         # Calibration Setting Dropdown
         calibration_label = QLabel("Calibration setting:")
         calibration_label.setStyleSheet("padding-left: 15px;")
-        toolbar_layout.addWidget(calibration_label)
+        row3_layout.addWidget(calibration_label)
 
         self.calibration_combo = QComboBox()
         self.calibration_combo.addItem("Linear interpolation")
         self.calibration_combo.addItem("Nearest reference")
         self.calibration_combo.setToolTip("Linear interpolation: uses standard Rf values as anchor points for Rf correction.\nNearest reference: corrects Rf based on the single closest reference substance.")
         self.calibration_combo.currentTextChanged.connect(self.on_calibration_mode_changed)
-        toolbar_layout.addWidget(self.calibration_combo)
+        row3_layout.addWidget(self.calibration_combo)
 
         # Inline Range control in Main Window
         self.range_main = QDoubleSpinBox()
@@ -546,20 +612,25 @@ class MainWindow(QMainWindow):
         self.range_main.setSingleStep(0.01)
         self.range_main.setValue(self.detection_range)
         self.range_main.valueChanged.connect(self.on_main_range_changed)
-        toolbar_layout.addWidget(self.range_main)
+        row3_layout.addWidget(self.range_main)
 
         self.update_detection_status_label()
         
-        toolbar_layout.addStretch()
-
-        # App Icon with TLCid text below
+        row3_layout.addStretch()
+        toolbar_left_col.addLayout(row3_layout)
+        
+        # Add left column to main toolbar layout
+        toolbar_hlayout.addLayout(toolbar_left_col)
+        
+        # Right column: App icon with TLCid text below (spans all three rows)
         import os
         base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         icon_path = os.path.join(base_path, "icon.png")
         if os.path.exists(icon_path):
             # Create a vertical layout for icon + text
-            icon_layout = QVBoxLayout()
-            icon_layout.setSpacing(0)
+            icon_column = QVBoxLayout()
+            icon_column.setSpacing(0)
+            icon_column.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
 
             # Icon
             self.icon_label = QLabel()
@@ -567,17 +638,18 @@ class MainWindow(QMainWindow):
             if not icon_pixmap.isNull():
                 self.icon_label.setPixmap(icon_pixmap.scaled(75, 75, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
                 self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                icon_layout.addWidget(self.icon_label)
+                icon_column.addWidget(self.icon_label)
 
             # TLCid text below icon
             self.tlcid_label = QLabel()
             self.tlcid_label.setText("TLCid")
             self.tlcid_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            icon_layout.addWidget(self.tlcid_label)
+            icon_column.addWidget(self.tlcid_label)
 
-            toolbar_layout.addLayout(icon_layout)
+            icon_column.addStretch()  # Push content to top
+            toolbar_hlayout.addLayout(icon_column)
 
-        main_layout.addLayout(toolbar_layout)
+        main_layout.addLayout(toolbar_hlayout)
 
         # Slots Area
         slots_layout = QHBoxLayout()
@@ -943,7 +1015,15 @@ class MainWindow(QMainWindow):
 
     def ensure_single_mode(self, active_btn):
         # Helper to uncheck other buttons
-        buttons = [self.mark_substance_button, self.mark_atranorin_button, self.mark_norstictic_button]
+        buttons = [
+            self.mark_substance_button, 
+            self.mark_atranorin_button, 
+            self.mark_norstictic_button,
+            self.mark_rhizocarpic_button,
+            self.mark_lecanoric_button,
+            self.mark_evernic_button,
+            self.mark_zeorin_button
+        ]
         for btn in buttons:
             if btn != active_btn and btn.isChecked():
                 btn.click() # This triggers its toggle handler to clean up
@@ -1222,6 +1302,50 @@ class MainWindow(QMainWindow):
         else:
             self.mark_norstictic_button.setText("Mark Norstictic")
             self.deactivate_marking_mode()
+
+    def toggle_mark_rhizocarpic(self, checked):
+        if checked:
+            self.ensure_single_mode(self.mark_rhizocarpic_button)
+            
+            # Rhizocarpic Acid Mode (ID -2)
+            self.mark_rhizocarpic_button.setText("Stop Ref (Rhi)")
+            self.activate_marking_mode(-2, QColor("orange"), "Rhizocarpic Acid (Ref)")
+        else:
+            self.mark_rhizocarpic_button.setText("Mark Rhizocarpic Acid")
+            self.deactivate_marking_mode()
+
+    def toggle_mark_lecanoric(self, checked):
+        if checked:
+            self.ensure_single_mode(self.mark_lecanoric_button)
+            
+            # Lecanoric Acid Mode (ID -3)
+            self.mark_lecanoric_button.setText("Stop Ref (Lec)")
+            self.activate_marking_mode(-3, QColor("lime"), "Lecanoric Acid (Ref)")
+        else:
+            self.mark_lecanoric_button.setText("Mark Lecanoric Acid")
+            self.deactivate_marking_mode()
+
+    def toggle_mark_evernic(self, checked):
+        if checked:
+            self.ensure_single_mode(self.mark_evernic_button)
+            
+            # Evernic Acid Mode (ID -4)
+            self.mark_evernic_button.setText("Stop Ref (Eve)")
+            self.activate_marking_mode(-4, QColor("magenta"), "Evernic Acid (Ref)")
+        else:
+            self.mark_evernic_button.setText("Mark Evernic Acid")
+            self.deactivate_marking_mode()
+
+    def toggle_mark_zeorin(self, checked):
+        if checked:
+            self.ensure_single_mode(self.mark_zeorin_button)
+            
+            # Zeorin Mode (ID -5)
+            self.mark_zeorin_button.setText("Stop Ref (Zeo)")
+            self.activate_marking_mode(-5, QColor("purple"), "Zeorin (Ref)")
+        else:
+            self.mark_zeorin_button.setText("Mark Zeorin")
+            self.deactivate_marking_mode()
     
     def update_results_display(self):
         # Aggregate data from all slots
@@ -1324,6 +1448,22 @@ class MainWindow(QMainWindow):
             current_sid = -1 # Norstictic ID
             if current_sid in aggregated and len(aggregated[current_sid]) == 3:
                 self.mark_norstictic_button.click()
+        elif self.mark_rhizocarpic_button.isChecked():
+            current_sid = -2 # Rhizocarpic Acid ID
+            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
+                self.mark_rhizocarpic_button.click()
+        elif self.mark_lecanoric_button.isChecked():
+            current_sid = -3 # Lecanoric Acid ID
+            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
+                self.mark_lecanoric_button.click()
+        elif self.mark_evernic_button.isChecked():
+            current_sid = -4 # Evernic Acid ID
+            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
+                self.mark_evernic_button.click()
+        elif self.mark_zeorin_button.isChecked():
+            current_sid = -5 # Zeorin ID
+            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
+                self.mark_zeorin_button.click()
 
         # Calibration Logic
         # Gather Active Standards per Plate
@@ -1340,6 +1480,30 @@ class MainWindow(QMainWindow):
              for idx, vals in aggregated[-1].items():
                  if vals and idx in self.norstictic_standards:
                      active_standards[idx].append((vals[0], self.norstictic_standards[idx]))
+
+        # Check Rhizocarpic Acid (-2)
+        if -2 in aggregated:
+             for idx, vals in aggregated[-2].items():
+                 if vals and idx in self.rhizocarpic_standards:
+                     active_standards[idx].append((vals[0], self.rhizocarpic_standards[idx]))
+
+        # Check Lecanoric Acid (-3)
+        if -3 in aggregated:
+             for idx, vals in aggregated[-3].items():
+                 if vals and idx in self.lecanoric_standards:
+                     active_standards[idx].append((vals[0], self.lecanoric_standards[idx]))
+
+        # Check Evernic Acid (-4)
+        if -4 in aggregated:
+             for idx, vals in aggregated[-4].items():
+                 if vals and idx in self.evernic_standards:
+                     active_standards[idx].append((vals[0], self.evernic_standards[idx]))
+
+        # Check Zeorin (-5)
+        if -5 in aggregated:
+             for idx, vals in aggregated[-5].items():
+                 if vals and idx in self.zeorin_standards:
+                     active_standards[idx].append((vals[0], self.zeorin_standards[idx]))
 
         # Check additional reference substances (sid > 0 with is_reference flag)
         for sid, sdata in self.samples.items():
@@ -1373,6 +1537,14 @@ class MainWindow(QMainWindow):
                         std_name = "Atranorin"
                     elif std in self.norstictic_standards.values():
                         std_name = "Norstictic Acid"
+                    elif std in self.rhizocarpic_standards.values():
+                        std_name = "Rhizocarpic Acid"
+                    elif std in self.lecanoric_standards.values():
+                        std_name = "Lecanoric Acid"
+                    elif std in self.evernic_standards.values():
+                        std_name = "Evernic Acid"
+                    elif std in self.zeorin_standards.values():
+                        std_name = "Zeorin"
                     else:
                         # Check if it's a user-defined reference substance
                         for sid, sdata in self.samples.items():
@@ -1470,6 +1642,14 @@ class MainWindow(QMainWindow):
                                             std_name = "Atranorin"
                                         elif std_val in self.norstictic_standards.values():
                                             std_name = "Norstictic Acid"
+                                        elif std_val in self.rhizocarpic_standards.values():
+                                            std_name = "Rhizocarpic Acid"
+                                        elif std_val in self.lecanoric_standards.values():
+                                            std_name = "Lecanoric Acid"
+                                        elif std_val in self.evernic_standards.values():
+                                            std_name = "Evernic Acid"
+                                        elif std_val in self.zeorin_standards.values():
+                                            std_name = "Zeorin"
                                         else:
                                             # Check user-defined reference substances
                                             std_name = "Unknown"
@@ -1486,6 +1666,14 @@ class MainWindow(QMainWindow):
                                             std_name = "Atranorin"
                                         elif std_val in self.norstictic_standards.values():
                                             std_name = "Norstictic Acid"
+                                        elif std_val in self.rhizocarpic_standards.values():
+                                            std_name = "Rhizocarpic Acid"
+                                        elif std_val in self.lecanoric_standards.values():
+                                            std_name = "Lecanoric Acid"
+                                        elif std_val in self.evernic_standards.values():
+                                            std_name = "Evernic Acid"
+                                        elif std_val in self.zeorin_standards.values():
+                                            std_name = "Zeorin"
                                         else:
                                             std_name = "Unknown"
                                             for ref_sid, sdata in self.samples.items():
@@ -1535,6 +1723,14 @@ class MainWindow(QMainWindow):
                                     std_name = "Atranorin"
                                 elif std_rf in self.norstictic_standards.values():
                                     std_name = "Norstictic Acid"
+                                elif std_rf in self.rhizocarpic_standards.values():
+                                    std_name = "Rhizocarpic Acid"
+                                elif std_rf in self.lecanoric_standards.values():
+                                    std_name = "Lecanoric Acid"
+                                elif std_rf in self.evernic_standards.values():
+                                    std_name = "Evernic Acid"
+                                elif std_rf in self.zeorin_standards.values():
+                                    std_name = "Zeorin"
                                 else:
                                     for ref_sid, sdata in self.samples.items():
                                         if sdata.get('is_reference', False) and sdata.get('reference_rf'):
@@ -1693,6 +1889,30 @@ class MainWindow(QMainWindow):
         print("=" * 80)
         print()
 
+        # Update reference button colors when marked on all three plates
+        self._update_reference_button_colors(aggregated)
+
+    def _update_reference_button_colors(self, aggregated):
+        """Update the text color of reference substance buttons when marked on all three plates."""
+        # Reference substance ID to button and color mapping
+        ref_button_config = [
+            (0, self.mark_atranorin_button, "red"),
+            (-1, self.mark_norstictic_button, "yellow"),
+            (-2, self.mark_rhizocarpic_button, "orange"),
+            (-3, self.mark_lecanoric_button, "lime"),
+            (-4, self.mark_evernic_button, "magenta"),
+            (-5, self.mark_zeorin_button, "purple"),
+        ]
+        
+        for sid, button, color in ref_button_config:
+            # Check if this reference substance is marked on all three plates
+            if sid in aggregated and len(aggregated[sid]) == 3:
+                # Marked on all three plates - apply color to button text
+                button.setStyleSheet(f"color: {color}; font-weight: bold;")
+            else:
+                # Not marked on all plates - reset to default
+                button.setStyleSheet("")
+
     def load_examples(self):
         import os
         base_path = os.path.dirname(os.path.abspath(__file__))
@@ -1821,6 +2041,14 @@ class MainWindow(QMainWindow):
                     color = QColor("red")       # Atranorin reference
                 elif sid == -1:
                     color = QColor("yellow")    # Norstictic Acid reference
+                elif sid == -2:
+                    color = QColor("orange")    # Rhizocarpic Acid reference
+                elif sid == -3:
+                    color = QColor("lime")      # Lecanoric Acid reference
+                elif sid == -4:
+                    color = QColor("magenta")   # Evernic Acid reference
+                elif sid == -5:
+                    color = QColor("purple")    # Zeorin reference
                 else:
                     color = self.colors[(sid - 1) % len(self.colors)]
                 self.samples[sid] = {
@@ -1886,6 +2114,19 @@ class MainWindow(QMainWindow):
                 
             self.update_results_display()
             
+            # Update reference button colors based on loaded data
+            # Re-aggregate to check which references are on all plates
+            aggregated = {}
+            for i, slot in enumerate(self.slots):
+                for spot in slot.image_label.spots:
+                    sid = spot['sample_id']
+                    if sid not in aggregated:
+                        aggregated[sid] = {}
+                    if i not in aggregated[sid]:
+                        aggregated[sid][i] = []
+                    aggregated[sid][i].append(0)  # Just need to mark presence
+            self._update_reference_button_colors(aggregated)
+            
         except Exception as e:
             print(f"Error loading file: {e}")
 
@@ -1908,6 +2149,24 @@ class MainWindow(QMainWindow):
         # Reset Controls
         if self.mark_substance_button.isChecked():
             self.mark_substance_button.click() # This will toggle it off and reset cursors
+        if self.mark_atranorin_button.isChecked():
+            self.mark_atranorin_button.click()
+        if self.mark_norstictic_button.isChecked():
+            self.mark_norstictic_button.click()
+        if self.mark_rhizocarpic_button.isChecked():
+            self.mark_rhizocarpic_button.click()
+        if self.mark_lecanoric_button.isChecked():
+            self.mark_lecanoric_button.click()
+        if self.mark_evernic_button.isChecked():
+            self.mark_evernic_button.click()
+        if self.mark_zeorin_button.isChecked():
+            self.mark_zeorin_button.click()
+        
+        # Reset reference button colors
+        for button in [self.mark_atranorin_button, self.mark_norstictic_button,
+                       self.mark_rhizocarpic_button, self.mark_lecanoric_button,
+                       self.mark_evernic_button, self.mark_zeorin_button]:
+            button.setStyleSheet("")
         
         # Close and clear all open characteristics windows
         for sid, win in list(self.char_windows.items()):
