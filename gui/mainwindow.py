@@ -291,9 +291,10 @@ class ImageSlot(QWidget):
         self.range_spin.setRange(0.0, 1.0)
         self.range_spin.setSingleStep(0.01)
         self.range_spin.setValue(0.05)
-        self.range_spin.setPrefix("Range: ±")
+        self.range_spin.setPrefix("±")
         self.range_spin.setSuffix(" Rf")
         self.range_spin.setToolTip(f"Range tolerance for plate {title}")
+        self.range_spin.setMaximumWidth(80)  # Reduced width to 1/3 of previous (120/3)
         self.range_spin.valueChanged.connect(self._on_range_changed)
         title_layout.addWidget(self.range_spin)
 
@@ -535,76 +536,88 @@ class MainWindow(QMainWindow):
         # Left column: toolbar controls in three rows
         toolbar_left_col = QVBoxLayout()
         toolbar_left_col.setSpacing(5)
-        
-        # Row 1: All buttons for marking reference substances
+
+        # Row 1: Label for Reference Substances
         row1_layout = QHBoxLayout()
         row1_layout.setSpacing(5)
         
-        self.mark_atranorin_button = QPushButton("Mark Atranorin")
-        self.mark_atranorin_button.setCheckable(True)
-        self.mark_atranorin_button.clicked.connect(self.toggle_mark_atranorin)
-        row1_layout.addWidget(self.mark_atranorin_button)
-        
-        self.mark_norstictic_button = QPushButton("Mark Norstictic")
-        self.mark_norstictic_button.setCheckable(True)
-        self.mark_norstictic_button.clicked.connect(self.toggle_mark_norstictic)
-        row1_layout.addWidget(self.mark_norstictic_button)
-
-        self.mark_rhizocarpic_button = QPushButton("Mark Rhizocarpic Acid")
-        self.mark_rhizocarpic_button.setCheckable(True)
-        self.mark_rhizocarpic_button.clicked.connect(self.toggle_mark_rhizocarpic)
-        row1_layout.addWidget(self.mark_rhizocarpic_button)
-
-        self.mark_lecanoric_button = QPushButton("Mark Lecanoric Acid")
-        self.mark_lecanoric_button.setCheckable(True)
-        self.mark_lecanoric_button.clicked.connect(self.toggle_mark_lecanoric)
-        row1_layout.addWidget(self.mark_lecanoric_button)
-
-        self.mark_evernic_button = QPushButton("Mark Evernic Acid")
-        self.mark_evernic_button.setCheckable(True)
-        self.mark_evernic_button.clicked.connect(self.toggle_mark_evernic)
-        row1_layout.addWidget(self.mark_evernic_button)
-
-        self.mark_zeorin_button = QPushButton("Mark Zeorin")
-        self.mark_zeorin_button.setCheckable(True)
-        self.mark_zeorin_button.clicked.connect(self.toggle_mark_zeorin)
-        row1_layout.addWidget(self.mark_zeorin_button)
-        
+        self.reference_substances_label = QLabel()
+        self.reference_substances_label.setStyleSheet("color: gray; padding-left: 10px;")
+        self.reference_substances_label.setText("<b>Reference Substances:</b>")
+        row1_layout.addWidget(self.reference_substances_label)
         row1_layout.addStretch()
         toolbar_left_col.addLayout(row1_layout)
         
-        # Row 2: "Mark Substance" button
+        # Row 2: All buttons for marking reference substances
         row2_layout = QHBoxLayout()
         row2_layout.setSpacing(5)
         
-        self.mark_substance_button = QPushButton("Mark Substance")
-        self.mark_substance_button.setCheckable(True)
-        self.mark_substance_button.clicked.connect(self.toggle_mark_substance)
-        row2_layout.addWidget(self.mark_substance_button)
+        self.mark_atranorin_button = QPushButton("Atranorin")
+        self.mark_atranorin_button.setCheckable(True)
+        self.mark_atranorin_button.clicked.connect(self.toggle_mark_atranorin)
+        row2_layout.addWidget(self.mark_atranorin_button)
+        
+        self.mark_norstictic_button = QPushButton("Norstictic Acid")
+        self.mark_norstictic_button.setCheckable(True)
+        self.mark_norstictic_button.clicked.connect(self.toggle_mark_norstictic)
+        row2_layout.addWidget(self.mark_norstictic_button)
+
+        self.mark_rhizocarpic_button = QPushButton("Rhizocarpic Acid")
+        self.mark_rhizocarpic_button.setCheckable(True)
+        self.mark_rhizocarpic_button.clicked.connect(self.toggle_mark_rhizocarpic)
+        row2_layout.addWidget(self.mark_rhizocarpic_button)
+
+        self.mark_lecanoric_button = QPushButton("Lecanoric Acid")
+        self.mark_lecanoric_button.setCheckable(True)
+        self.mark_lecanoric_button.clicked.connect(self.toggle_mark_lecanoric)
+        row2_layout.addWidget(self.mark_lecanoric_button)
+
+        self.mark_evernic_button = QPushButton("Evernic Acid")
+        self.mark_evernic_button.setCheckable(True)
+        self.mark_evernic_button.clicked.connect(self.toggle_mark_evernic)
+        row2_layout.addWidget(self.mark_evernic_button)
+
+        self.mark_zeorin_button = QPushButton("Zeorin")
+        self.mark_zeorin_button.setCheckable(True)
+        self.mark_zeorin_button.clicked.connect(self.toggle_mark_zeorin)
+        row2_layout.addWidget(self.mark_zeorin_button)
         
         row2_layout.addStretch()
         toolbar_left_col.addLayout(row2_layout)
         
-        # Row 3: Label with Method and Calibration settings dropdown menu
+        # Row 3: "Mark Substance" button
         row3_layout = QHBoxLayout()
         row3_layout.setSpacing(5)
+        
+        self.mark_substance_button = QPushButton("Mark Substance")
+        self.mark_substance_button.setCheckable(True)
+        self.mark_substance_button.clicked.connect(self.toggle_mark_substance)
+        row3_layout.addWidget(self.mark_substance_button)
+        
+        row3_layout.addStretch()
+        toolbar_left_col.addLayout(row3_layout)
+        
+        # Row 3: Label with Method and Calibration settings dropdown menu
+        row4_layout = QHBoxLayout()
+        row4_layout.setSpacing(5)
+
         
         # Detection Status Label
         self.detection_status_label = QLabel()
         self.detection_status_label.setStyleSheet("color: gray; padding-left: 10px;")
-        row3_layout.addWidget(self.detection_status_label)
+        row4_layout.addWidget(self.detection_status_label)
 
         # Calibration Setting Dropdown
         calibration_label = QLabel("Calibration setting:")
         calibration_label.setStyleSheet("padding-left: 15px;")
-        row3_layout.addWidget(calibration_label)
+        row4_layout.addWidget(calibration_label)
 
         self.calibration_combo = QComboBox()
         self.calibration_combo.addItem("Linear interpolation")
         self.calibration_combo.addItem("Nearest reference")
         self.calibration_combo.setToolTip("Linear interpolation: uses standard Rf values as anchor points for Rf correction.\nNearest reference: corrects Rf based on the single closest reference substance.")
         self.calibration_combo.currentTextChanged.connect(self.on_calibration_mode_changed)
-        row3_layout.addWidget(self.calibration_combo)
+        row4_layout.addWidget(self.calibration_combo)
 
         # Inline Range control in Main Window
         self.range_main = QDoubleSpinBox()
@@ -612,12 +625,12 @@ class MainWindow(QMainWindow):
         self.range_main.setSingleStep(0.01)
         self.range_main.setValue(self.detection_range)
         self.range_main.valueChanged.connect(self.on_main_range_changed)
-        row3_layout.addWidget(self.range_main)
+        row4_layout.addWidget(self.range_main)
 
         self.update_detection_status_label()
         
-        row3_layout.addStretch()
-        toolbar_left_col.addLayout(row3_layout)
+        row4_layout.addStretch()
+        toolbar_left_col.addLayout(row4_layout)
         
         # Add left column to main toolbar layout
         toolbar_hlayout.addLayout(toolbar_left_col)
@@ -731,7 +744,7 @@ class MainWindow(QMainWindow):
                 # Use first predicted match if no assigned name
                 matches = self.samples[sid].get('last_matches', [])
                 if matches:
-                    assigned_name = matches[0]
+                    assigned_name = matches[0][1]  # Extract name from (score, name) tuple
 
             if assigned_name:
                 ref_rf = self.get_substance_rf_from_db(assigned_name)
@@ -926,7 +939,9 @@ class MainWindow(QMainWindow):
             sid = int(link.split(":", 1)[1])
             matches = self.samples.get(sid, {}).get('last_matches', [])
             if matches:
-                 text = "\n".join(matches)
+                 # Format matches with scores: "name (score: X.XXXXXX)"
+                 match_lines = [f"{name} (score: {score:.6f})" for score, name in matches]
+                 text = "\n".join(match_lines)
                  QMessageBox.information(self, f"All Matches for {self.samples[sid]['name']}", text)
 
     def open_characteristics_window(self, sid):
@@ -1117,9 +1132,9 @@ class MainWindow(QMainWindow):
                     # Otherwise, use all predicted candidates for this spot
                     display_name = sdata['name']
                     matches = sdata.get('last_matches', [])
-                    for m in matches:
+                    for score, name in matches:
                         prediction_data.append({
-                            'name': m,
+                            'name': name,
                             'sample_name': display_name,
                             'color': sdata['color']
                         })
@@ -1810,8 +1825,8 @@ class MainWindow(QMainWindow):
                 # Print prediction results
                 print(f"  Predictions ({len(matches)} match{'es' if len(matches) != 1 else ''}):")
                 if matches:
-                    for i, match in enumerate(matches[:10], 1):  # Show first 10
-                        print(f"    {i}. {match}")
+                    for i, (score, name) in enumerate(matches[:10], 1):  # Show first 10
+                        print(f"    {i}. {name} (score: {score:.6f})")
                     if len(matches) > 10:
                         print(f"    ... and {len(matches) - 10} more")
                 else:
@@ -1822,8 +1837,9 @@ class MainWindow(QMainWindow):
             if matches:
                  display_matches = matches[:5]
                  match_links = []
-                 for m in display_matches:
-                     match_links.append(f"<a href='substance:{m}'>{m}</a>")
+                 for score, name in display_matches:
+                     # Add title attribute with score for hover tooltip
+                     match_links.append(f"<a href='substance:{name}' title='Match score: {score:.6f}'>{name}</a>")
                  match_str = ", ".join(match_links)
                  
                  if len(matches) > 5:
@@ -2369,12 +2385,12 @@ class MainWindow(QMainWindow):
         # Sort by score (lowest error first)
         scores.sort(key=lambda x: x[0])
 
-        # Return all unique names sorted by score
-        unique_names = []
+        # Return all unique names with their scores sorted by score
+        unique_matches = []
         seen = set()
-        for _, name in scores:
+        for score, name in scores:
             if name not in seen:
-                unique_names.append(name)
+                unique_matches.append((score, name))
                 seen.add(name)
 
-        return unique_names
+        return unique_matches

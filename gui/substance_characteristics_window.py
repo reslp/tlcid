@@ -81,8 +81,8 @@ class SubstanceCharacteristicsWindow(QDialog):
         self.combo_assigned = QComboBox()
         self.combo_assigned.setEditable(True)
         self.combo_assigned.addItem("Default (Substance X)", None)
-        for c in candidates:
-            self.combo_assigned.addItem(c, c)
+        for score, name in candidates:
+            self.combo_assigned.addItem(name, name)
         
         if assigned_name:
             self.combo_assigned.setEditText(assigned_name)
