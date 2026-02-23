@@ -261,22 +261,43 @@ class SquareLabel(QLabel):
              self.setText("No Image Loaded")
 
 class ImageSlot(QWidget):
-    def __init__(self, title):
+    # Signal emitted when the per-plate range changes
+    rangeChanged = pyqtSignal(int, float)  # (plate_index, range_value)
+
+    def __init__(self, title, plate_index):
         super().__init__()
+        self.plate_index = plate_index
         self.image_path = None # Store loaded image path
         self.layout = QVBoxLayout()
         self.layout.setSpacing(2)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(self.layout)
-        
-        # Title
+
+        # Title with Range SpinBox
+        title_layout = QHBoxLayout()
+        title_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Title label
         self.title_label = QLabel(title)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         font = self.title_label.font()
         font.setPointSize(14)
         font.setBold(True)
         self.title_label.setFont(font)
-        self.layout.addWidget(self.title_label)
+        title_layout.addWidget(self.title_label)
+
+        # Range SpinBox (per-plate)
+        self.range_spin = QDoubleSpinBox()
+        self.range_spin.setRange(0.0, 1.0)
+        self.range_spin.setSingleStep(0.01)
+        self.range_spin.setValue(0.05)
+        self.range_spin.setPrefix("±")
+        self.range_spin.setSuffix(" Rf")
+        self.range_spin.setToolTip(f"Range tolerance for plate {title}")
+        self.range_spin.valueChanged.connect(self._on_range_changed)
+        title_layout.addWidget(self.range_spin)
+
+        self.layout.addLayout(title_layout)
         
         # Image Area
         self.image_label = SquareLabel()
@@ -291,11 +312,25 @@ class ImageSlot(QWidget):
         self.load_button = QPushButton("Load Image")
         self.load_button.clicked.connect(self.load_image)
         controls_layout.addWidget(self.load_button)
-        
+
         # Export Button
         self.export_button = QPushButton("Export Image")
         self.export_button.clicked.connect(self.export_marked_image)
         controls_layout.addWidget(self.export_button)
+
+    def _on_range_changed(self, value):
+        """Emit signal when the per-plate range changes."""
+        self.rangeChanged.emit(self.plate_index, value)
+
+    def set_range(self, value):
+        """Set the range spinbox value without triggering the signal."""
+        self.range_spin.blockSignals(True)
+        self.range_spin.setValue(value)
+        self.range_spin.blockSignals(False)
+
+    def get_range(self):
+        """Get the current range value."""
+        return self.range_spin.value()
         
     def load_image(self):
         file_name, _ = QFileDialog.getOpenFileName(
@@ -454,7 +489,10 @@ class MainWindow(QMainWindow):
 
         # Detection Settings
         self.detection_method = "Range"
-        self.detection_range = 0.05
+        self.detection_range = 0.05  # Global default (used as initial value for plates)
+
+        # Per-plate range settings: {plate_index: range_value}
+        self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
 
         
         # Main Layout Construction
@@ -530,12 +568,14 @@ class MainWindow(QMainWindow):
         slots_layout = QHBoxLayout()
         self.slots = []
         self.plate_labels = ['A', "B'", 'C']
-        for label in self.plate_labels:
-            slot = ImageSlot(label)
+        for plate_idx, label in enumerate(self.plate_labels):
+            slot = ImageSlot(label, plate_idx)
             # Connect spot changes to aggregation logic
             slot.image_label.spotsChanged.connect(self.update_results_display)
             # Also connect line moves to aggregation logic
             slot.image_label.linesMoved.connect(lambda s, f: self.update_results_display())
+            # Connect per-plate range changes
+            slot.rangeChanged.connect(self.on_plate_range_changed)
             self.slots.append(slot)
             slots_layout.addWidget(slot)
         main_layout.addLayout(slots_layout)
@@ -1092,6 +1132,10 @@ class MainWindow(QMainWindow):
     def on_main_range_changed(self, val):
         self.detection_range = val
         self.update_detection_status_label()
+        # Sync to all plates
+        for i, slot in enumerate(self.slots):
+            slot.set_range(val)
+            self.plate_ranges[i] = val
         self.update_results_display()
         # Sync Settings Window if open
         if hasattr(self, 'settings_window') and self.settings_window is not None:
@@ -1099,15 +1143,21 @@ class MainWindow(QMainWindow):
             self.settings_window.range_spin.setValue(val)
             self.settings_window.range_spin.blockSignals(False)
 
+    def on_plate_range_changed(self, plate_idx, range_val):
+        """Handle per-plate range changes."""
+        self.plate_ranges[plate_idx] = range_val
+        self.update_results_display()
+
     def update_detection_status_label(self):
         is_range = (self.detection_method == "Range")
         text = f"Method: <b>{self.detection_method}</b>"
         if is_range:
-            text += " (+/-)"
+            text += " (per-plate ranges active)"
         self.detection_status_label.setText(text)
         # Show/hide the inline range spinbox based on detection method
+        # Note: Per-plate ranges are now set individually via spinboxes in ImageSlot
         if hasattr(self, 'range_main'):
-            self.range_main.setVisible(is_range)
+            self.range_main.setVisible(False)  # Hide global range, use per-plate instead
             # Sync spinbox value without triggering valueChanged
             self.range_main.blockSignals(True)
             self.range_main.setValue(self.detection_range)
@@ -1446,9 +1496,14 @@ class MainWindow(QMainWindow):
                 for cal in calibration_info:
                     print(f"  Plate {cal['plate']}: Rf raw={cal['raw']:.3f} -> corrected={cal['corrected']:.3f}")
                     if cal['standards']:
-                        print(f"    Calibration based on: {', '.join(cal['standards'])}")
+                        # Show which reference substance(s) were used for Rf correction
+                        if len(cal['standards']) == 1:
+                            print(f"    Rf correction using reference: {cal['standards'][0]}")
+                        else:
+                            print(f"    Rf correction using references: {' and '.join(cal['standards'])}")
+                            print(f"    (Interpolation between calibration points)")
                     else:
-                        print(f"    No calibration applied (no reference standards)")
+                        print(f"    No Rf correction applied (no reference standards on this plate)")
                 print("-" * 80)
             
             # 3. Predictions
@@ -1578,9 +1633,10 @@ class MainWindow(QMainWindow):
             return
             
         data = {
-            "version": 1,
+            "version": 2,
             "detection_method": self.detection_method,
             "detection_range": self.detection_range,
+            "plate_ranges": self.plate_ranges,
             "samples": {},
             "plates": []
         }
@@ -1642,9 +1698,15 @@ class MainWindow(QMainWindow):
                  self.detection_method = data["detection_method"]
             if "detection_range" in data:
                  self.detection_range = float(data["detection_range"])
-                 
+            if "plate_ranges" in data:
+                 self.plate_ranges = {int(k): v for k, v in data["plate_ranges"].items()}
+
             # Update UI for detection settings
             self.update_detection_status_label()
+
+            # Update per-plate range spinboxes
+            for i, slot in enumerate(self.slots):
+                slot.set_range(self.plate_ranges.get(i, 0.05))
             
             # Block signals on all image labels during loading to prevent
             # premature update_results_display calls (which would remove
@@ -1737,7 +1799,12 @@ class MainWindow(QMainWindow):
         # Reset Global State
         self.samples = {}
         self.next_sample_id = 1
-        
+
+        # Reset per-plate ranges to default
+        self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
+        for i, slot in enumerate(self.slots):
+            slot.set_range(0.05)
+
         # Reset Controls
         if self.mark_substance_button.isChecked():
             self.mark_substance_button.click() # This will toggle it off and reset cursors
@@ -1850,23 +1917,23 @@ class MainWindow(QMainWindow):
                         })
             db.close()
         
-    def predict_matches(self, input_data, filter_group=None, filter_genus=None, 
+    def predict_matches(self, input_data, filter_group=None, filter_genus=None,
                         filter_vis=False, filter_uvs=False, filter_uvl=False,
                         filter_aft_vis=None, filter_aft_uv=None):
         # input_data: {plate_idx: value}
         # Returns list of top names
-        
+
         scores = []
         # Detection Setting: self.detection_method ("MSE" or "Range")
-        # Detection Range: self.detection_range
-        
+        # Per-plate Detection Ranges: self.plate_ranges
+
         for item in self.reference_data:
             name = item['name']
-            
+
             # Filter by Group
             if filter_group and item.get('GroupName') != filter_group:
                 continue
-                
+
             # Filter by Genus (Optimized using Lichens table mapping)
             if filter_genus:
                 valid_subs = self.genus_to_substances.get(filter_genus, set())
@@ -1895,29 +1962,31 @@ class MainWindow(QMainWindow):
                     continue
 
             if self.detection_method == "Range":
-                # Range Logic: ALL present plates must be within range
+                # Range Logic: ALL present plates must be within their respective range
                 match = True
                 dist = 0.0
                 count = 0
-                
+
                 for plate_idx, obs_val in input_data.items():
                    if plate_idx < len(item['rf']):
                        ref_val = item['rf'][plate_idx]
                        if ref_val is None:
                            match = False
                            break
-                       
+
+                       # Use per-plate range
+                       plate_range = self.plate_ranges.get(plate_idx, self.detection_range)
                        error = abs(obs_val - ref_val)
-                       if error > self.detection_range:
+                       if error > plate_range:
                            match = False
                            break
-                       
+
                        dist += error ** 2
                        count += 1
                    else:
                        match = False
                        break
-                
+
                 if match and count > 0:
                     mse = dist / count
                     scores.append((mse, name))
@@ -1926,21 +1995,21 @@ class MainWindow(QMainWindow):
                 # MSE Logic
                 dist = 0.0
                 count = 0
-                
+
                 for plate_idx, obs_val in input_data.items():
                     if plate_idx < len(item['rf']): # Ensure index is valid
                         ref_val = item['rf'][plate_idx]
                         if ref_val is not None:
                             dist += (obs_val - ref_val) ** 2
                             count += 1
-                
+
                 if count > 0:
                     mse = dist / count
                     scores.append((mse, name))
-        
+
         # Sort by score (lowest error first)
         scores.sort(key=lambda x: x[0])
-        
+
         # Return all unique names sorted by score
         unique_names = []
         seen = set()
@@ -1948,5 +2017,5 @@ class MainWindow(QMainWindow):
             if name not in seen:
                 unique_names.append(name)
                 seen.add(name)
-                    
+
         return unique_names
