@@ -291,7 +291,7 @@ class ImageSlot(QWidget):
         self.range_spin.setRange(0.0, 1.0)
         self.range_spin.setSingleStep(0.01)
         self.range_spin.setValue(0.05)
-        self.range_spin.setPrefix("±")
+        self.range_spin.setPrefix("Range: ±")
         self.range_spin.setSuffix(" Rf")
         self.range_spin.setToolTip(f"Range tolerance for plate {title}")
         self.range_spin.valueChanged.connect(self._on_range_changed)
@@ -494,6 +494,9 @@ class MainWindow(QMainWindow):
         # Per-plate range settings: {plate_index: range_value}
         self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
 
+        # Calibration Mode: "Linear interpolation" or "Nearest reference"
+        self.calibration_mode = "Linear interpolation"
+
         
         # Main Layout Construction
         main_widget = QWidget()
@@ -524,6 +527,18 @@ class MainWindow(QMainWindow):
         self.detection_status_label = QLabel()
         self.detection_status_label.setStyleSheet("color: gray; padding-left: 10px;")
         toolbar_layout.addWidget(self.detection_status_label)
+
+        # Calibration Setting Dropdown
+        calibration_label = QLabel("Calibration setting:")
+        calibration_label.setStyleSheet("padding-left: 15px;")
+        toolbar_layout.addWidget(calibration_label)
+
+        self.calibration_combo = QComboBox()
+        self.calibration_combo.addItem("Linear interpolation")
+        self.calibration_combo.addItem("Nearest reference")
+        self.calibration_combo.setToolTip("Linear interpolation: uses standard Rf values as anchor points for Rf correction.\nNearest reference: corrects Rf based on the single closest reference substance.")
+        self.calibration_combo.currentTextChanged.connect(self.on_calibration_mode_changed)
+        toolbar_layout.addWidget(self.calibration_combo)
 
         # Inline Range control in Main Window
         self.range_main = QDoubleSpinBox()
@@ -1148,6 +1163,11 @@ class MainWindow(QMainWindow):
         self.plate_ranges[plate_idx] = range_val
         self.update_results_display()
 
+    def on_calibration_mode_changed(self, mode):
+        """Handle calibration mode changes from the dropdown."""
+        self.calibration_mode = mode
+        self.update_results_display()
+
     def update_detection_status_label(self):
         is_range = (self.detection_method == "Range")
         text = f"Method: <b>{self.detection_method}</b>"
@@ -1423,67 +1443,132 @@ class MainWindow(QMainWindow):
                 if plate_idx in plate_data:
                     raw_val = plate_data[plate_idx][0]
 
-                    # Apply Linear Interpolation Calibration
+                    # Apply Calibration based on calibration_mode setting
                     standards = active_standards.get(plate_idx, [])
-                    # Include boundary points (0,0) and (1,1)
-                    points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
+                    corrected_val = raw_val  # Default (no correction)
 
-                    corrected_val = raw_val # Default
-                    used_standards = []
-                    for j in range(len(points) - 1):
-                        x1, y1 = points[j]
-                        x2, y2 = points[j+1]
-                        if x1 <= raw_val <= x2:
-                            if abs(x2 - x1) > 1e-7:
-                                corrected_val = y1 + (raw_val - x1) * (y2 - y1) / (x2 - x1)
+                    if self.calibration_mode == "Linear interpolation":
+                        # Linear Interpolation Calibration
+                        # Include boundary points (0,0) and (1,1)
+                        points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
+
+                        used_standards = []
+                        for j in range(len(points) - 1):
+                            x1, y1 = points[j]
+                            x2, y2 = points[j+1]
+                            if x1 <= raw_val <= x2:
+                                if abs(x2 - x1) > 1e-7:
+                                    corrected_val = y1 + (raw_val - x1) * (y2 - y1) / (x2 - x1)
+                                else:
+                                    corrected_val = y1
+                                # Identify which standards were used for this calibration
+                                for k in range(len(standards)):
+                                    if standards[k] == points[j]:
+                                        std_obs, std_val = standards[k]
+                                        # Identify standard name
+                                        if std_val in self.atranorin_standards.values():
+                                            std_name = "Atranorin"
+                                        elif std_val in self.norstictic_standards.values():
+                                            std_name = "Norstictic Acid"
+                                        else:
+                                            # Check user-defined reference substances
+                                            std_name = "Unknown"
+                                            for ref_sid, sdata in self.samples.items():
+                                                if sdata.get('is_reference', False) and sdata.get('reference_rf'):
+                                                    ref_rf = sdata['reference_rf']
+                                                    if plate_idx < len(ref_rf) and ref_rf[plate_idx] == std_val:
+                                                        std_name = sdata.get('assigned_name', f"Substance {ref_sid}")
+                                                        break
+                                        used_standards.append(std_name)
+                                    if standards[k] == points[j+1]:
+                                        std_obs, std_val = standards[k]
+                                        if std_val in self.atranorin_standards.values():
+                                            std_name = "Atranorin"
+                                        elif std_val in self.norstictic_standards.values():
+                                            std_name = "Norstictic Acid"
+                                        else:
+                                            std_name = "Unknown"
+                                            for ref_sid, sdata in self.samples.items():
+                                                if sdata.get('is_reference', False) and sdata.get('reference_rf'):
+                                                    ref_rf = sdata['reference_rf']
+                                                    if plate_idx < len(ref_rf) and ref_rf[plate_idx] == std_val:
+                                                        std_name = sdata.get('assigned_name', f"Substance {ref_sid}")
+                                                        break
+                                        used_standards.append(std_name)
+                                break
+
+                        # Record calibration info for this plate
+                        calibration_info.append({
+                            'plate': label,
+                            'raw': raw_val,
+                            'corrected': corrected_val,
+                            'standards': used_standards,
+                            'mode': 'Linear interpolation'
+                        })
+
+                    else:  # "Nearest reference" mode
+                        if standards:
+                            # Find the closest reference substance by observed Rf value
+                            closest_std = None
+                            min_dist = float('inf')
+                            for obs_rf, std_rf in standards:
+                                dist = abs(raw_val - obs_rf)
+                                if dist < min_dist:
+                                    min_dist = dist
+                                    closest_std = (obs_rf, std_rf)
+
+                            if closest_std:
+                                obs_rf, std_rf = closest_std
+                                # Apply correction based on the nearest reference
+                                # The correction shifts the observed value to match the reference scale
+                                if obs_rf > 1e-7:  # Avoid division by zero
+                                    # Correction factor: std_rf / obs_rf
+                                    # Corrected = raw_val * (std_rf / obs_rf)
+                                    correction_factor = std_rf / obs_rf
+                                    corrected_val = raw_val * correction_factor
+                                    # Clamp to valid Rf range
+                                    corrected_val = max(0.0, min(1.0, corrected_val))
+
+                                # Identify the reference substance name
+                                std_name = "Unknown"
+                                if std_rf in self.atranorin_standards.values():
+                                    std_name = "Atranorin"
+                                elif std_rf in self.norstictic_standards.values():
+                                    std_name = "Norstictic Acid"
+                                else:
+                                    for ref_sid, sdata in self.samples.items():
+                                        if sdata.get('is_reference', False) and sdata.get('reference_rf'):
+                                            ref_rf = sdata['reference_rf']
+                                            if plate_idx < len(ref_rf) and ref_rf[plate_idx] == std_rf:
+                                                std_name = sdata.get('assigned_name', f"Substance {ref_sid}")
+                                                break
+
+                                calibration_info.append({
+                                    'plate': label,
+                                    'raw': raw_val,
+                                    'corrected': corrected_val,
+                                    'standards': [std_name],
+                                    'mode': 'Nearest reference'
+                                })
                             else:
-                                corrected_val = y1
-                            # Identify which standards were used for this calibration
-                            for k in range(len(standards)):
-                                if standards[k] == points[j]:
-                                    std_obs, std_val = standards[k]
-                                    # Identify standard name
-                                    if std_val in self.atranorin_standards.values():
-                                        std_name = "Atranorin"
-                                    elif std_val in self.norstictic_standards.values():
-                                        std_name = "Norstictic Acid"
-                                    else:
-                                        # Check user-defined reference substances
-                                        std_name = "Unknown"
-                                        for ref_sid, sdata in self.samples.items():
-                                            if sdata.get('is_reference', False) and sdata.get('reference_rf'):
-                                                ref_rf = sdata['reference_rf']
-                                                if plate_idx < len(ref_rf) and ref_rf[plate_idx] == std_val:
-                                                    std_name = sdata.get('assigned_name', f"Substance {ref_sid}")
-                                                    break
-                                    used_standards.append(std_name)
-                                if standards[k] == points[j+1]:
-                                    std_obs, std_val = standards[k]
-                                    if std_val in self.atranorin_standards.values():
-                                        std_name = "Atranorin"
-                                    elif std_val in self.norstictic_standards.values():
-                                        std_name = "Norstictic Acid"
-                                    else:
-                                        std_name = "Unknown"
-                                        for ref_sid, sdata in self.samples.items():
-                                            if sdata.get('is_reference', False) and sdata.get('reference_rf'):
-                                                ref_rf = sdata['reference_rf']
-                                                if plate_idx < len(ref_rf) and ref_rf[plate_idx] == std_val:
-                                                    std_name = sdata.get('assigned_name', f"Substance {ref_sid}")
-                                                    break
-                                    used_standards.append(std_name)
-                            break
+                                calibration_info.append({
+                                    'plate': label,
+                                    'raw': raw_val,
+                                    'corrected': corrected_val,
+                                    'standards': [],
+                                    'mode': 'Nearest reference'
+                                })
+                        else:
+                            calibration_info.append({
+                                'plate': label,
+                                'raw': raw_val,
+                                'corrected': corrected_val,
+                                'standards': [],
+                                'mode': 'Nearest reference'
+                            })
 
                     prediction_input[plate_idx] = corrected_val
                     val_str = f"{corrected_val:.2f}"
-
-                    # Record calibration info for this plate
-                    calibration_info.append({
-                        'plate': label,
-                        'raw': raw_val,
-                        'corrected': corrected_val,
-                        'standards': used_standards
-                    })
 
                 item = QTableWidgetItem(val_str)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1494,7 +1579,7 @@ class MainWindow(QMainWindow):
                 print(f"\nSubstance: {self.samples[sid].get('assigned_name') or self.samples[sid]['name']}")
                 print("-" * 80)
                 for cal in calibration_info:
-                    print(f"  Plate {cal['plate']}: Rf raw={cal['raw']:.3f} -> corrected={cal['corrected']:.3f}")
+                    print(f"  Plate {cal['plate']}: Rf raw={cal['raw']:.3f} -> corrected={cal['corrected']:.3f} (mode: {cal['mode']})")
                     if cal['standards']:
                         # Show which reference substance(s) were used for Rf correction
                         if len(cal['standards']) == 1:
@@ -1637,6 +1722,7 @@ class MainWindow(QMainWindow):
             "detection_method": self.detection_method,
             "detection_range": self.detection_range,
             "plate_ranges": self.plate_ranges,
+            "calibration_mode": self.calibration_mode,
             "samples": {},
             "plates": []
         }
@@ -1700,6 +1786,14 @@ class MainWindow(QMainWindow):
                  self.detection_range = float(data["detection_range"])
             if "plate_ranges" in data:
                  self.plate_ranges = {int(k): v for k, v in data["plate_ranges"].items()}
+            if "calibration_mode" in data:
+                 self.calibration_mode = data["calibration_mode"]
+                 # Update the combo box without triggering the signal
+                 self.calibration_combo.blockSignals(True)
+                 index = self.calibration_combo.findText(data["calibration_mode"])
+                 if index >= 0:
+                     self.calibration_combo.setCurrentIndex(index)
+                 self.calibration_combo.blockSignals(False)
 
             # Update UI for detection settings
             self.update_detection_status_label()
@@ -1804,6 +1898,12 @@ class MainWindow(QMainWindow):
         self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
         for i, slot in enumerate(self.slots):
             slot.set_range(0.05)
+
+        # Reset calibration mode to default
+        self.calibration_mode = "Linear interpolation"
+        self.calibration_combo.blockSignals(True)
+        self.calibration_combo.setCurrentIndex(0)
+        self.calibration_combo.blockSignals(False)
 
         # Reset Controls
         if self.mark_substance_button.isChecked():
