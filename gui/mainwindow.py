@@ -683,8 +683,8 @@ class MainWindow(QMainWindow):
         # Results Display
         # Results Display using QTableWidget
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(7)
-        self.results_table.setHorizontalHeaderLabels(["Color", "Substance", "Plate A", "Plate B'", "Plate C", "Predictions", "Reference"])
+        self.results_table.setColumnCount(8)
+        self.results_table.setHorizontalHeaderLabels(["Color", "Substance", "Plate A", "Plate B'", "Plate C", "Predictions", "Reference", "All Results"])
         
         # Column Resizing Logic
         header = self.results_table.horizontalHeader()
@@ -708,6 +708,10 @@ class MainWindow(QMainWindow):
         # 6: Reference (Fixed, Small)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
         self.results_table.setColumnWidth(6, 70)
+
+        # 7: All Results button (Fixed, Small)
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
+        self.results_table.setColumnWidth(7, 90)
         
         # Ensure horizontal scrolling is possible
         self.results_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -935,14 +939,24 @@ class MainWindow(QMainWindow):
         elif link.startswith("edit_sample:"):
             sid = int(link.split(":", 1)[1])
             self.open_characteristics_window(sid)
-        elif link.startswith("show_more:"):
-            sid = int(link.split(":", 1)[1])
-            matches = self.samples.get(sid, {}).get('last_matches', [])
-            if matches:
-                 # Format matches with scores: "name (score: X.XXXXXX)"
-                 match_lines = [f"{name} (score: {score:.6f})" for score, name in matches]
-                 text = "\n".join(match_lines)
-                 QMessageBox.information(self, f"All Matches for {self.samples[sid]['name']}", text)
+        # The code for showing the substances inside a QMessageBox is commented out, since there is a different solution.
+        # It will be kept as reference though.
+        #elif link.startswith("show_more:"):
+        #    sid = int(link.split(":", 1)[1])
+        #    matches = self.samples.get(sid, {}).get('last_matches', [])
+        #    if matches:
+        #         # Format matches with scores: "name (score: X.XXXXXX)"
+        #         match_lines = [f"{name} (score: {score:.6f})" for score, name in matches]
+        #         text = "\n".join(match_lines)
+        #         QMessageBox.information(self, f"All Matches for {self.samples[sid]['name']}", text)
+
+    def show_prediction_results(self, substance_id, matches, plate_data, substance_name):
+        """Show all prediction results in a table dialog."""
+        from gui.prediction_results_window import PredictionResultsWindow
+
+        # Create and show the prediction results window
+        window = PredictionResultsWindow(substance_name, substance_id, matches, plate_data, self)
+        window.exec()
 
     def open_characteristics_window(self, sid):
         if sid not in self.samples:
@@ -1844,7 +1858,9 @@ class MainWindow(QMainWindow):
                  
                  if len(matches) > 5:
                      more_count = len(matches) - 5
-                     match_str += f" <a href='show_more:{sid}' style='color:blue;'>+{more_count} more</a>"
+                     match_str += f"+{more_count} more"
+                     # keep for reference: This was for QMessageBox implementation of additional results:
+                     #match_str += f" <a href='show_more:{sid}' style='color:blue;'>+{more_count} more</a>"
 
                  if current_filter:
                      match_str += f" <small style='color:gray'>[{current_filter}]</small>"
@@ -1881,6 +1897,18 @@ class MainWindow(QMainWindow):
                 empty_label = QLabel()
                 empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.results_table.setCellWidget(current_row, 6, empty_label)
+
+            # 5. All Results Button (Column 7)
+            # Show button only for regular substances (sid > 0) with predictions
+            if sid > 0 and matches:
+                results_button = QPushButton("View All")
+                results_button.setProperty('sid', sid)
+                results_button.clicked.connect(lambda checked, s=sid, m=matches, p=prediction_input, n=self.samples[sid].get('assigned_name') or self.samples[sid]['name']: self.show_prediction_results(s, m, p, n))
+                self.results_table.setCellWidget(current_row, 7, results_button)
+            else:
+                empty_button_label = QLabel()
+                empty_button_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.results_table.setCellWidget(current_row, 7, empty_button_label)
 
         # Restore Scroll Position
         self.results_table.verticalScrollBar().setValue(v_scroll)
