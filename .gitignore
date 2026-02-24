@@ -9,3 +9,15 @@ wheels/
 # Virtual environments
 .venv
 tlcid-win/*
+
+# other files and directories
+examples/
+old/
+webapp/
+prediction_logic*
+TASKS.md
+CODER_NOTES.md
+BUGFIX*
+.specify/
+specs/
+scripts/
