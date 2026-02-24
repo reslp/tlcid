@@ -3,10 +3,19 @@
 
 a = Analysis(
     ['main.py'],
-    pathex=[],
+    pathex=['.'],
     binaries=[],
     datas=[('Mytabolites.db', '.'), ('VERSION', '.'), ('examples', 'examples'), ('icon.png', '.')],
-    hiddenimports=[],
+    hiddenimports=[
+        'gui',
+        'gui.mainwindow',
+        'gui.database_window',
+        'gui.prediction_results_window',
+        'gui.settings_window',
+        'gui.species_prediction_window',
+        'gui.substance_characteristics_window',
+        'gui.substance_detail_window',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

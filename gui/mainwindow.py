@@ -1553,7 +1553,7 @@ class MainWindow(QMainWindow):
         print("=" * 80)
         for idx in [0, 1, 2]:
             standards = active_standards[idx]
-            print(f"\nPlate {['A', "B", 'C'][idx]}:")
+            print(f"\nPlate {['A', 'B', 'C'][idx]}:")
             if not standards:
                 print("  No reference standards active - using raw Rf values")
             else:
