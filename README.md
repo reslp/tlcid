@@ -69,7 +69,7 @@ The executable will be at `dist/windows/TLCid/TLCid.exe`.
 ## Usage
 
 <p align="center">
-  <img src="screenshot.png" alt="TLCid Logo" width="90%">
+  <img src="screenshot.png" alt="Screenshot" width="90%">
 </p>
 
 
