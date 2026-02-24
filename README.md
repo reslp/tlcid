@@ -68,6 +68,11 @@ The executable will be at `dist/windows/TLCid/TLCid.exe`.
 
 ## Usage
 
+<p align="center">
+  <img src="screenshot.png" alt="TLCid Logo" width="90%">
+</p>
+
+
 1. **Load plate images** using the "Load Image" buttons
 2. **Set reference lines**: Click and drag the green start/front lines to mark solvent boundaries
 3. **Mark reference standards** (optional): Use Atranorin/Norstictic acid spots for calibration
