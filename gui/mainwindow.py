@@ -473,7 +473,7 @@ class MainWindow(QMainWindow):
         
         self.reference_data = [] # Cache for prediction
         self.load_reference_data() # Load DB data on startup
-        
+
         # Standards configuration (Values / 100.0)
         # ID 0: Atranorin
         self.atranorin_standards = {
@@ -556,7 +556,7 @@ class MainWindow(QMainWindow):
         self.mark_atranorin_button.setCheckable(True)
         self.mark_atranorin_button.clicked.connect(self.toggle_mark_atranorin)
         row2_layout.addWidget(self.mark_atranorin_button)
-        
+
         self.mark_norstictic_button = QPushButton("Norstictic Acid")
         self.mark_norstictic_button.setCheckable(True)
         self.mark_norstictic_button.clicked.connect(self.toggle_mark_norstictic)
@@ -1327,7 +1327,7 @@ class MainWindow(QMainWindow):
             
             # Norstictic Mode (ID -1)
             self.mark_norstictic_button.setText("Stop Ref (Nor)")
-            self.activate_marking_mode(-1, QColor("yellow"), "Norstictic Acid (Ref)")
+            self.activate_marking_mode(-1, QColor("gold"), "Norstictic Acid (Ref)")
         else:
             self.mark_norstictic_button.setText("Mark Norstictic")
             self.deactivate_marking_mode()
@@ -1349,7 +1349,7 @@ class MainWindow(QMainWindow):
             
             # Lecanoric Acid Mode (ID -3)
             self.mark_lecanoric_button.setText("Stop Ref (Lec)")
-            self.activate_marking_mode(-3, QColor("lime"), "Lecanoric Acid (Ref)")
+            self.activate_marking_mode(-3, QColor("limegreen"), "Lecanoric Acid (Ref)")
         else:
             self.mark_lecanoric_button.setText("Mark Lecanoric Acid")
             self.deactivate_marking_mode()
@@ -1941,9 +1941,9 @@ class MainWindow(QMainWindow):
         # Reference substance ID to button and color mapping
         ref_button_config = [
             (0, self.mark_atranorin_button, "red"),
-            (-1, self.mark_norstictic_button, "yellow"),
+            (-1, self.mark_norstictic_button, "gold"),
             (-2, self.mark_rhizocarpic_button, "orange"),
-            (-3, self.mark_lecanoric_button, "lime"),
+            (-3, self.mark_lecanoric_button, "limegreen"),
             (-4, self.mark_evernic_button, "magenta"),
             (-5, self.mark_zeorin_button, "purple"),
         ]
@@ -2084,11 +2084,11 @@ class MainWindow(QMainWindow):
                 if sid == 0:
                     color = QColor("red")       # Atranorin reference
                 elif sid == -1:
-                    color = QColor("yellow")    # Norstictic Acid reference
+                    color = QColor("gold")    # Norstictic Acid reference
                 elif sid == -2:
                     color = QColor("orange")    # Rhizocarpic Acid reference
                 elif sid == -3:
-                    color = QColor("lime")      # Lecanoric Acid reference
+                    color = QColor("limegreen")      # Lecanoric Acid reference
                 elif sid == -4:
                     color = QColor("magenta")   # Evernic Acid reference
                 elif sid == -5:
@@ -2211,7 +2211,7 @@ class MainWindow(QMainWindow):
                        self.mark_rhizocarpic_button, self.mark_lecanoric_button,
                        self.mark_evernic_button, self.mark_zeorin_button]:
             button.setStyleSheet("")
-        
+
         # Close and clear all open characteristics windows
         for sid, win in list(self.char_windows.items()):
             try:
