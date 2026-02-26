@@ -1,0 +1,30 @@
+FROM python:3.13-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Runtime/build libraries needed by PyQt6/PyInstaller on Linux
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    binutils \
+    libgl1 \
+    libegl1 \
+    libxkbcommon0 \
+    libdbus-1-3 \
+    libfontconfig1 \
+    libx11-xcb1 \
+    libxcb1 \
+    libxrender1 \
+    libxext6 \
+    libsm6 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+COPY requirements.txt /tmp/requirements.txt
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    python -m pip install pyinstaller PyQt6 Pillow && \
+    python -m pip install -r /tmp/requirements.txt
+
+CMD ["pyinstaller", "--clean", "--noconfirm", "tlcid.spec", "--distpath", "dist/linux", "--workpath", "build/linux"]

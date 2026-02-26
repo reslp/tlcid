@@ -66,6 +66,18 @@ The executable will be at `dist/windows/TLCid/TLCid.exe`.
 - Docker must be running
 - The build uses Wine inside a container for Windows cross-compilation
 
+### Linux
+
+Build a Linux binary bundle using Docker:
+```bash
+./build_linux_docker.sh
+```
+The bundle will be at `dist/linux/TLCid/`.
+
+**Requirements:**
+- Docker must be running
+- Build artifacts are generated inside the container and written to the mounted project directory
+
 ## Usage
 
 <p align="center">
