@@ -873,7 +873,7 @@ class MainWindow(QMainWindow):
         # Reference Menu
         ref_menu = menu_bar.addMenu("Reference")
         
-        tables = ["Lichens", "LichensBackup", "Substances", "SubstancesBackup"]
+        tables = ["Lichens", "Substances"]
         for table in tables:
             action = QAction(table, self)
             # Use default arg to capture loop variable
