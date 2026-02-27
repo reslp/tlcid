@@ -137,14 +137,15 @@ class PredictionResultsWindow(QDialog):
             score_item.setData(Qt.ItemDataRole.UserRole, score)  # Store numeric value for sorting
             self.table.setItem(row, 4, score_item)
 
-            # Color code the score (lower is better)
-            # Green for very good scores (< 0.01), yellow for good (< 0.05), white for others
+            # Color code the score cell (lower is better)
+            # Keep text black for readability; use background color for quality indication
+            score_item.setForeground(QColor(0, 0, 0))
             if score < 0.01:
-                score_item.setForeground(QColor(200, 255, 200))  # Light green
+                score_item.setBackground(QColor(200, 255, 200))  # Light green
             elif score < 0.05:
-                score_item.setForeground(QColor(255, 255, 200))  # Light yellow
+                score_item.setBackground(QColor(255, 255, 200))  # Light yellow
             else:
-                score_item.setForeground(QColor(255, 127, 127))  # Light red
+                score_item.setBackground(QColor(255, 220, 220))  # Light red
 
         # Sort by score (ascending) by default
         self.table.sortByColumn(4, Qt.SortOrder.AscendingOrder)
