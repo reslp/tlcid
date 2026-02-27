@@ -453,10 +453,15 @@ class ImageSlot(QWidget):
         export_pixmap.save(file_name)
 
 class MainWindow(QMainWindow):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, debug_mode=False):
         super().__init__(parent)
         self.setWindowTitle("TLCid")
-        self.resize(1200, 700) 
+        self.resize(1200, 700)
+
+        import os
+        self.base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.db_path = os.path.join(self.base_path, "Mytabolites.db")
+        self.debug_mode = debug_mode
         
         # State
         self.samples = {} # {id: {'color': QColor, 'name': str}}
@@ -472,6 +477,7 @@ class MainWindow(QMainWindow):
         self.detail_windows = {}  # {name: SubstanceDetailWindow}
         
         self.reference_data = [] # Cache for prediction
+        self._ensure_default_db_connection()
         self.load_reference_data() # Load DB data on startup
 
         # Standards configuration (Values / 100.0)
@@ -828,6 +834,56 @@ class MainWindow(QMainWindow):
                 
             self.update_results_display()
 
+    def _ensure_default_db_connection(self):
+        from PyQt6.QtSql import QSqlDatabase
+
+        if QSqlDatabase.contains("qt_sql_default_connection"):
+            db = QSqlDatabase.database("qt_sql_default_connection")
+        else:
+            db = QSqlDatabase.addDatabase("QSQLITE")
+
+        db.setDatabaseName(self.db_path)
+        if not db.isOpen():
+            if not db.open():
+                print(f"Error: Could not open database: {self.db_path}")
+        return db
+
+    def select_database_file(self):
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "Select SQLite Database", self.db_path, "SQLite Database (*.db *.sqlite *.sqlite3);;All Files (*)"
+        )
+        if file_name:
+            self.set_database_path(file_name)
+
+    def set_database_path(self, db_path):
+        import os
+        from PyQt6.QtSql import QSqlDatabase
+
+        if not db_path or not os.path.exists(db_path):
+            QMessageBox.warning(self, "Invalid database", f"Database file not found:\n{db_path}")
+            return
+
+        self.db_path = db_path
+
+        for connection_name in ["qt_sql_default_connection", "main_ref_connection", "substances_connection"]:
+            if QSqlDatabase.contains(connection_name):
+                db = QSqlDatabase.database(connection_name)
+                if db.isOpen():
+                    db.close()
+                db.setDatabaseName(self.db_path)
+
+        self._ensure_default_db_connection()
+        self.load_reference_data()
+
+        if hasattr(self, "table_windows"):
+            for win in self.table_windows.values():
+                if win is not None:
+                    win.close()
+            self.table_windows = {}
+
+        self.update_results_display()
+        self.statusBar().showMessage(f"Using database: {self.db_path}", 5000)
+
     def create_menu(self):
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("File")
@@ -880,6 +936,12 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda checked, t=table: self.show_table(t))
             ref_menu.addAction(action)
 
+        if self.debug_mode:
+            debug_menu = menu_bar.addMenu("Debug")
+            select_db_action = QAction("Select database file...", self)
+            select_db_action.triggered.connect(self.select_database_file)
+            debug_menu.addAction(select_db_action)
+
     def show_table(self, table_name):
         from gui.database_window import DatabaseTableWindow
         
@@ -889,10 +951,7 @@ class MainWindow(QMainWindow):
             
         # Create logic: bring to front if open, else create
         if table_name not in self.table_windows or self.table_windows[table_name] is None:
-             import os
-             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-             db_path = os.path.join(base_path, "Mytabolites.db")
-             self.table_windows[table_name] = DatabaseTableWindow(table_name, db_path)
+             self.table_windows[table_name] = DatabaseTableWindow(table_name, self.db_path)
         
         window = self.table_windows[table_name]
         window.show()
@@ -908,13 +967,8 @@ class MainWindow(QMainWindow):
             # Ensure DB connection exists (should be established by load_reference_data or show_table)
             # Check default connection
             if not QSqlDatabase.contains("qt_sql_default_connection"):
-                # Re-establish if missing (reuse logic?)
-                import os
-                base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                db_path = os.path.join(base_path, "Mytabolites.db")
-                db = QSqlDatabase.addDatabase("QSQLITE")
-                db.setDatabaseName(db_path)
-                if not db.open():
+                db = self._ensure_default_db_connection()
+                if not db.isOpen():
                     print("Error: Could not open database")
                     return
             else:
@@ -969,13 +1023,9 @@ class MainWindow(QMainWindow):
         if QSqlDatabase.contains("qt_sql_default_connection"):
             db = QSqlDatabase.database()
         else:
-             # Fallback if somehow missing
-             import os
-             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-             db_path = os.path.join(base_path, "Mytabolites.db")
-             db = QSqlDatabase.addDatabase("QSQLITE")
-             db.setDatabaseName(db_path)
-             if not db.open(): return
+             db = self._ensure_default_db_connection()
+             if not db.isOpen():
+                 return
 
         # Manage window (initialized in __init__)
         sample_name = self.samples[sid]['name']
@@ -1161,12 +1211,9 @@ class MainWindow(QMainWindow):
         if QSqlDatabase.contains("qt_sql_default_connection"):
             db = QSqlDatabase.database()
         else:
-             import os
-             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-             db_path = os.path.join(base_path, "Mytabolites.db")
-             db = QSqlDatabase.addDatabase("QSQLITE")
-             db.setDatabaseName(db_path)
-             if not db.open(): return
+             db = self._ensure_default_db_connection()
+             if not db.isOpen():
+                 return
 
         self.species_window = SpeciesPredictionWindow(prediction_data, db)
         self.species_window.show()
@@ -2258,17 +2305,14 @@ class MainWindow(QMainWindow):
     def load_reference_data(self):
         self.reference_data = []
         self.genus_to_substances = {}
-        import os
         from PyQt6.QtSql import QSqlDatabase, QSqlQuery
-        
-        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        db_path = os.path.join(base_path, "Mytabolites.db")
-        
+
         if QSqlDatabase.contains("main_ref_connection"):
             db = QSqlDatabase.database("main_ref_connection")
         else:
             db = QSqlDatabase.addDatabase("QSQLITE", "main_ref_connection")
-            db.setDatabaseName(db_path)
+
+        db.setDatabaseName(self.db_path)
             
         if db.open():
             # Populate Genus Cache

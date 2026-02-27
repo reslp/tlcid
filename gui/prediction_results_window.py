@@ -39,9 +39,15 @@ class PredictionResultsWindow(QDialog):
         db = QSqlDatabase.database()
         if not db.isOpen():
             # Try to open connection if not already open
-            import os
-            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            db_path = os.path.join(base_path, "Mytabolites.db")
+            db_path = None
+            if self.parent() is not None and hasattr(self.parent(), "db_path"):
+                db_path = self.parent().db_path
+
+            if db_path is None:
+                import os
+                base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                db_path = os.path.join(base_path, "Mytabolites.db")
+
             db = QSqlDatabase.addDatabase("QSQLITE")
             db.setDatabaseName(db_path)
             if not db.open():
