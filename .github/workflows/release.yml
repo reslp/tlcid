@@ -60,7 +60,7 @@ jobs:
             artifact_suffix: linux
           - os: windows-latest
             artifact_suffix: windows
-          - os: macos-15-intel
+          - os: macos-15-intel #will not be supported anymore after apr 2027 by gh actions.
             artifact_suffix: macos-intel
           - os: macos-14
             artifact_suffix: macos-arm
@@ -72,7 +72,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: '3.10' # this version is important
 
       - name: Download latest tlcid_database.db release asset
         shell: bash
@@ -168,7 +168,10 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller pillow pyqt6
+          pip install setuptools wheel
+          pip install pyinstaller 
+          pip install pillow 
+          pip install PyQt6==6.9.1
 
       - name: Build with PyInstaller
         shell: bash
