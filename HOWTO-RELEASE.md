@@ -6,7 +6,7 @@ A release workflow is defined in `.github/workflows/release.yml`.
 - **Branch guard:** jobs run only when that push is on the repository default branch.
 - **Tag:** the workflow reads `VERSION` and creates/uses a git tag with that exact value.
 - **Database source:** each build job downloads the latest `tlcid_database.db` from the latest release of `reslp/tlcid-database` before running PyInstaller.
-- **Artifacts:** PyInstaller builds for Linux, macOS, and Windows are attached to the GitHub Release.
+- **Artifacts:** PyInstaller builds for Linux, Windows, macOS Intel (`macos-13`), and macOS ARM (`macos-14`) are attached to the GitHub Release.
 - **Release notes:** generated from commits since the previous tag; if no prior tag exists, full history is used.
 
 ## How to cut a release

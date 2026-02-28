@@ -55,7 +55,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_suffix: linux
+          - os: windows-latest
+            artifact_suffix: windows
+          - os: macos-13
+            artifact_suffix: macos-intel
+          - os: macos-14
+            artifact_suffix: macos-arm
 
     steps:
       - name: Checkout
@@ -176,7 +184,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          ditto -c -k --sequesterRsrc --keepParent dist/TLCid.app TLCid-macos.zip
+          ditto -c -k --sequesterRsrc --keepParent dist/TLCid.app TLCid-${{ matrix.artifact_suffix }}.zip
 
       - name: Package artifact (Windows)
         if: runner.os == 'Windows'
@@ -187,10 +195,11 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tlcid-${{ runner.os }}
+          name: tlcid-${{ matrix.artifact_suffix }}
           path: |
             TLCid-linux.tar.gz
-            TLCid-macos.zip
+            TLCid-macos-intel.zip
+            TLCid-macos-arm.zip
             TLCid-windows.zip
           if-no-files-found: error
 
