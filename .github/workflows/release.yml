@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - VERSION
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -64,6 +65,46 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+
+      - name: Download latest tlcid_database.db release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import pathlib
+          import urllib.request
+
+          api_url = "https://api.github.com/repos/reslp/tlcid-database/releases/latest"
+          req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json"})
+          with urllib.request.urlopen(req) as response:
+              release = json.load(response)
+
+          assets = release.get("assets", [])
+          asset = next((a for a in assets if a.get("name") == "tlcid_database.db"), None)
+          if asset is None:
+              asset = next((a for a in assets if "tlcid_database.db" in a.get("name", "")), None)
+
+          if asset is None:
+              available = ", ".join(a.get("name", "<unnamed>") for a in assets)
+              raise SystemExit(f"Could not find tlcid_database.db in latest release assets. Available: {available}")
+
+          download_url = asset["browser_download_url"]
+          out_path = pathlib.Path("tlcid_database.db")
+          print(f"Downloading {asset['name']} from {download_url}")
+          urllib.request.urlretrieve(download_url, out_path)
+
+          size = out_path.stat().st_size
+          if size <= 0:
+              raise SystemExit("Downloaded tlcid_database.db is empty")
+
+          with out_path.open("rb") as f:
+              header = f.read(16)
+          if header != b"SQLite format 3\\x00":
+              raise SystemExit("Downloaded file is not a valid SQLite database header")
+
+          print(f"Downloaded {out_path} ({size} bytes)")
+          PY
 
       - name: Install dependencies
         shell: bash
