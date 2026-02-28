@@ -60,7 +60,7 @@ jobs:
             artifact_suffix: linux
           - os: windows-latest
             artifact_suffix: windows
-          - os: macos-13
+          - os: macos-15-intel
             artifact_suffix: macos-intel
           - os: macos-14
             artifact_suffix: macos-arm
