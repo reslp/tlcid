@@ -460,7 +460,7 @@ class MainWindow(QMainWindow):
 
         import os
         self.base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.db_path = os.path.join(self.base_path, "Mytabolites.db")
+        self.db_path = os.path.join(self.base_path, "tlcid_database.db")
         self.debug_mode = debug_mode
         
         # State

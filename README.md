@@ -105,7 +105,7 @@ tlcid/
 │   ├── settings_window.py
 │   ├── species_prediction_window.py
 │   └── substance_characteristics_window.py
-├── Mytabolites.db       # Reference substance database
+├── tlcid_database.db       # Reference substance database (picked up during release build)
 ├── examples/            # Sample TLC plate images
 └── tlcid.spec           # PyInstaller build spec
 ```
