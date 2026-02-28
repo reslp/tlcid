@@ -68,42 +68,92 @@ jobs:
 
       - name: Download latest tlcid_database.db release asset
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
+          import os
           import pathlib
+          import sqlite3
+          import time
           import urllib.request
 
-          api_url = "https://api.github.com/repos/reslp/tlcid-database/releases/latest"
-          req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json"})
-          with urllib.request.urlopen(req) as response:
-              release = json.load(response)
+          OWNER = "reslp"
+          REPO = "tlcid-database"
+          ASSET_NAME = "tlcid_database.db"
+          OUT_PATH = pathlib.Path("tlcid_database.db")
 
+          token = os.environ.get("GITHUB_TOKEN", "").strip()
+
+          def request_json(url: str, *, retries: int = 3):
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "tlcid-release-workflow",
+              }
+              if token:
+                  headers["Authorization"] = f"Bearer {token}"
+              for attempt in range(1, retries + 1):
+                  try:
+                      req = urllib.request.Request(url, headers=headers)
+                      with urllib.request.urlopen(req) as response:
+                          return json.load(response)
+                  except Exception as exc:
+                      if attempt == retries:
+                          raise
+                      wait_s = attempt * 2
+                      print(f"Attempt {attempt}/{retries} failed ({exc}); retrying in {wait_s}s...")
+                      time.sleep(wait_s)
+
+          release = request_json(f"https://api.github.com/repos/{OWNER}/{REPO}/releases/latest")
           assets = release.get("assets", [])
-          asset = next((a for a in assets if a.get("name") == "tlcid_database.db"), None)
-          if asset is None:
-              asset = next((a for a in assets if "tlcid_database.db" in a.get("name", "")), None)
-
+          asset = next((a for a in assets if a.get("name") == ASSET_NAME), None)
           if asset is None:
               available = ", ".join(a.get("name", "<unnamed>") for a in assets)
-              raise SystemExit(f"Could not find tlcid_database.db in latest release assets. Available: {available}")
+              raise SystemExit(f"Could not find {ASSET_NAME} in latest release assets. Available: {available}")
 
-          download_url = asset["browser_download_url"]
-          out_path = pathlib.Path("tlcid_database.db")
-          print(f"Downloading {asset['name']} from {download_url}")
-          urllib.request.urlretrieve(download_url, out_path)
+          asset_api_url = asset.get("url")
+          if not asset_api_url:
+              raise SystemExit("Release asset did not include API URL")
 
-          size = out_path.stat().st_size
-          if size <= 0:
-              raise SystemExit("Downloaded tlcid_database.db is empty")
+          headers = {
+              "Accept": "application/octet-stream",
+              "User-Agent": "tlcid-release-workflow",
+          }
+          if token:
+              headers["Authorization"] = f"Bearer {token}"
 
-          with out_path.open("rb") as f:
-              header = f.read(16)
-          if header != b"SQLite format 3\\x00":
+          print(f"Downloading {asset['name']} via GitHub API asset endpoint")
+          req = urllib.request.Request(asset_api_url, headers=headers)
+          with urllib.request.urlopen(req) as response:
+              content_type = (response.headers.get("content-type") or "").lower()
+              if "text/html" in content_type:
+                  preview = response.read(300).decode("utf-8", errors="replace")
+                  raise SystemExit(f"Expected binary database, received HTML (content-type={content_type}): {preview}")
+              data = response.read()
+
+          OUT_PATH.write_bytes(data)
+
+          raw = OUT_PATH.read_bytes()
+          size = len(raw)
+          if size < 1024:
+              preview = raw[:300].decode("utf-8", errors="replace")
+              raise SystemExit(f"Downloaded {ASSET_NAME} is suspiciously small ({size} bytes): {preview}")
+
+          header = raw[:16]
+          if header != b"SQLite format 3\x00":
+              text_preview = raw[:300].decode("utf-8", errors="replace")
+              if "<html" in text_preview.lower() or "<!doctype" in text_preview.lower() or "not found" in text_preview.lower():
+                  raise SystemExit(f"Downloaded file looks like an HTML/error response, not a SQLite DB: {text_preview}")
               raise SystemExit("Downloaded file is not a valid SQLite database header")
 
-          print(f"Downloaded {out_path} ({size} bytes)")
+          with sqlite3.connect(str(OUT_PATH)) as conn:
+              result = conn.execute("PRAGMA integrity_check;").fetchone()
+          if not result or result[0] != "ok":
+              raise SystemExit(f"Downloaded SQLite database failed integrity_check: {result}")
+
+          print(f"Downloaded {OUT_PATH} ({size} bytes) and passed SQLite integrity_check")
           PY
 
       - name: Install dependencies
