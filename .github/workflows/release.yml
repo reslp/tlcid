@@ -230,7 +230,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: web-download-data
-          path: web/download-data.json
+          path: docs/download-data.json
           if-no-files-found: error
 
       - name: Download build artifacts
