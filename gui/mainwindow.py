@@ -1116,6 +1116,73 @@ class MainWindow(QMainWindow):
             slot.image_label.set_global_colors(color_map)
             slot.image_label.set_add_sample_mode(True, sid)
 
+    def _collect_database_about_info(self):
+        """Collect lightweight database info for display in the About dialog."""
+        import os
+        import sqlite3
+        from datetime import datetime
+
+        info_lines = []
+        db_path = getattr(self, 'db_path', None)
+        if not db_path or not os.path.exists(db_path):
+            return info_lines
+
+        try:
+            file_size_mb = os.path.getsize(db_path) / (1024 * 1024)
+            info_lines.append(f"Database file: {os.path.basename(db_path)} ({file_size_mb:.2f} MB)")
+        except OSError:
+            info_lines.append(f"Database file: {os.path.basename(db_path)}")
+
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+            table_names = [row[0] for row in cur.fetchall()]
+            info_lines.append(f"Database tables: {len(table_names)}")
+
+            for table in ("Substances", "Lichens"):
+                if table in table_names:
+                    cur.execute(f'SELECT COUNT(*) FROM "{table}"')
+                    row_count = cur.fetchone()[0]
+                    info_lines.append(f"{table} rows: {row_count}")
+
+            if "metadata" in table_names:
+                metadata_created = None
+                try:
+                    cur.execute("PRAGMA table_info(metadata)")
+                    cols = [row[1] for row in cur.fetchall()]
+                    created_col = None
+                    for candidate in ("created_at", "created", "creation_date", "created_on", "date_created"):
+                        if candidate in cols:
+                            created_col = candidate
+                            break
+
+                    if created_col:
+                        cur.execute(f'SELECT "{created_col}" FROM metadata WHERE "{created_col}" IS NOT NULL LIMIT 1')
+                        row = cur.fetchone()
+                        if row and row[0] is not None:
+                            raw_value = str(row[0]).strip()
+                            metadata_created = raw_value
+                            try:
+                                if raw_value.isdigit():
+                                    metadata_created = datetime.fromtimestamp(int(raw_value)).strftime("%Y-%m-%d %H:%M:%S")
+                            except Exception:
+                                pass
+                except sqlite3.Error:
+                    pass
+
+                if metadata_created:
+                    info_lines.append(f"Database created: {metadata_created}")
+                else:
+                    info_lines.append("Database created: available in metadata table")
+
+            conn.close()
+        except sqlite3.Error:
+            info_lines.append("Database statistics unavailable")
+
+        return info_lines
+
     def show_about_dialog(self):
         import os
         version = "Unknown"
@@ -1125,15 +1192,13 @@ class MainWindow(QMainWindow):
             with open(version_path, 'r') as f:
                 version = f.read().strip()
 
-        # Create custom dialog
         dialog = QDialog(self)
         dialog.setWindowTitle("About TLCid")
-        dialog.setMinimumWidth(400)
+        dialog.setMinimumWidth(460)
 
         layout = QVBoxLayout()
         dialog.setLayout(layout)
 
-        # Add icon
         icon_path = os.path.join(base_path, "icon.png")
         if os.path.exists(icon_path):
             icon_label = QLabel()
@@ -1143,13 +1208,22 @@ class MainWindow(QMainWindow):
                 icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 layout.addWidget(icon_label)
 
-        # Add text
+        about_lines = [
+            f"TLCid v{version}",
+            "",
+            "Copyright by Philipp Resl 2026"
+        ]
+
+        db_info_lines = self._collect_database_about_info()
+        if db_info_lines:
+            about_lines.extend(["", "Database statistics:"])
+            about_lines.extend(db_info_lines)
+
         text_label = QLabel()
-        text_label.setText(f"TLCid v{version}\n\nCopyright by Philipp Resl 2026")
+        text_label.setText("\n".join(about_lines))
         text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(text_label)
 
-        # Add close button
         close_button = QPushButton("Close")
         close_button.clicked.connect(dialog.accept)
         close_layout = QHBoxLayout()
