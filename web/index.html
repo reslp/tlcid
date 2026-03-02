@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TLCid — TLC plate analysis for lichen substances</title>
+  <meta name="description" content="TLCid helps analyze thin-layer chromatography plates and identify lichen substances." />
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --line: #e2e8f0;
+      --accent: #2563eb;
+      --accent-2: #1d4ed8;
+      --card: #f8fafc;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.6;
+    }
+    .container { width: min(1080px, calc(100% - 2rem)); margin: 0 auto; }
+    header { padding: 3rem 0 1.5rem; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #ffffff, #f8fbff 80%); }
+    .hero { display: grid; gap: 1.5rem; align-items: center; grid-template-columns: 96px 1fr; }
+    .logo { width: 96px; height: 96px; object-fit: contain; border-radius: 16px; box-shadow: var(--shadow); border: 1px solid var(--line); background: #fff; padding: 0.4rem; }
+    h1 { margin: 0; font-size: clamp(1.8rem, 3.2vw, 2.6rem); line-height: 1.2; }
+    .lead { margin: 0.6rem 0 0; color: var(--muted); max-width: 70ch; }
+    .actions { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 1.25rem; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; border-radius: 12px; padding: 0.65rem 1rem; font-weight: 600; border: 1px solid transparent; transition: 120ms ease; }
+    .btn-primary { color: #fff; background: var(--accent); }
+    .btn-primary:hover { background: var(--accent-2); }
+    .btn-secondary { color: var(--text); background: #fff; border-color: var(--line); }
+    .btn-secondary:hover { border-color: #cbd5e1; background: #f8fafc; }
+    main { padding: 2rem 0 3rem; }
+    .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin-bottom: 1.75rem; }
+    .card { border: 1px solid var(--line); background: var(--card); border-radius: 16px; padding: 1rem 1rem 1.1rem; }
+    .card h2 { margin: 0 0 0.35rem; font-size: 1.05rem; }
+    .card p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+    .card ul, .card ol { margin: 0.4rem 0 0; padding-left: 1.2rem; color: var(--muted); }
+    .card li { margin: 0.25rem 0; }
+    .screenshot { margin-top: 0.5rem; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); background: #fff; }
+    .screenshot img { display: block; width: 100%; height: auto; }
+    footer { border-top: 1px solid var(--line); color: var(--muted); padding: 1rem 0 2rem; font-size: 0.9rem; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f1f5f9; padding: 0.1rem 0.35rem; border-radius: 0.4rem; font-size: 0.9em; }
+    @media (max-width: 600px) {
+      .hero { grid-template-columns: 1fr; text-align: center; }
+      .logo { margin-inline: auto; }
+      .actions { justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container hero">
+      <img class="logo" src="icon.png" alt="TLCid logo" />
+      <div>
+        <h1>TLCid</h1>
+        <p class="lead">A desktop tool for analyzing TLC plates and supporting lichen substance identification.</p>
+        <div class="actions">
+          <a class="btn btn-primary" href="https://github.com/reslp/tlcid" target="_blank" rel="noopener noreferrer">View TLCid on GitHub</a>
+          <a class="btn btn-secondary" href="https://github.com/reslp/tlcid-database" target="_blank" rel="noopener noreferrer">View Database Project</a>
+        </div>
+      </div>
+    </div>
+  </header>
+  <main class="container">
+    <section class="grid" aria-label="Project highlights">
+      <article class="card"><h2>Purpose</h2><p>Analyze TLC data, compare observed Rf values, and inspect likely substance candidates quickly.</p></article>
+      <article class="card"><h2>Prediction</h2><p>Predict lichen species based on substance profile.</p></article>
+      <article class="card"><h2>Data Source</h2><p>The <code>tlcid-database</code> project provides and maintains the underlying database. Contributions welcome!</p></article>
+    </section>
+    <section class="card" aria-label="Overview" style="margin-bottom: 1rem;">
+      <h2>Overview</h2>
+      <p>
+        TLCid is a desktop application for analyzing TLC (Thin Layer Chromatography) plates, designed specifically
+        for identifying lichen substances. It lets you load plate images, mark reference lines and spots, and predict
+        substances based on Rf values against a built-in reference database.
+      </p>
+    </section>
+    <section class="screenshot" aria-label="Application screenshot">
+      <img src="screenshot.png" alt="TLCid application screenshot" />
+    </section>
+    <section class="card" aria-label="Usage" style="margin-top: 1rem;">
+      <h2>Usage</h2>
+      <ol>
+        <li><strong>Load plate images</strong> using the “Load Image” buttons.</li>
+        <li><strong>Set reference lines</strong>: Click and drag the green start/front lines to mark solvent boundaries.</li>
+        <li><strong>Mark reference standards</strong> (optional): Use Atranorin/Norstictic acid spots for calibration.</li>
+        <li><strong>Add substance spots</strong>: Click on the plate to mark spots.</li>
+        <li><strong>View predictions</strong>: Results appear in the right panel with candidate substances.</li>
+        <li><strong>Refine matches</strong>: Use the characteristics window to filter by genus, UV response, etc.</li>
+        <li><strong>Predict species</strong>: Use <code>Analysis → Predict species</code> to identify lichens from the substance profile.</li>
+      </ol>
+    </section>
+    <section class="card" aria-label="Download" style="margin-top: 1rem;">
+      <h2>Download</h2>
+      <p id="download-app-version">Loading latest TLCid release…</p>
+      <ul id="download-app-assets"></ul>
+      <p id="download-db-version" style="margin-top: 0.75rem;">Loading latest database release…</p>
+      <p style="margin-top: 0.5rem;">You can also browse always-current release pages: <a href="https://github.com/reslp/tlcid/releases/latest" target="_blank" rel="noopener noreferrer">TLCid latest</a> and <a href="https://github.com/reslp/tlcid-database/releases/latest" target="_blank" rel="noopener noreferrer">Database latest</a>.</p>
+    </section>
+
+  </main>
+  <footer>
+    <div class="container"><span id="year"></span> TLCid · Philipp Resl</div>
+  </footer>
+  <script>
+  document.getElementById("year").textContent = new Date().getFullYear();
+
+  const preferredAssets = [
+    ["TLCid-windows.zip", "Windows"],
+    ["TLCid-macos-arm.zip", "macOS (Apple Silicon)"],
+    ["TLCid-macos-intel.zip", "macOS (Intel)"],
+    ["TLCid-linux.tar.gz", "Linux"],
+  ];
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  async function loadDownloadData() {
+    const appEl = document.getElementById("download-app-version");
+    const assetsEl = document.getElementById("download-app-assets");
+    const dbEl = document.getElementById("download-db-version");
+
+    try {
+      const response = await fetch("download-data.json", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+
+      const app = data.app;
+      const db = data.database;
+
+      appEl.innerHTML = `Latest TLCid app release: <a href="${escapeHtml(app.html_url)}" target="_blank" rel="noopener noreferrer"><code>${escapeHtml(app.tag_name)}</code></a>`;
+
+      const byName = Object.fromEntries((app.assets || []).map(a => [a.name, a.browser_download_url]));
+      const items = preferredAssets
+        .filter(([name]) => byName[name])
+        .map(([name, label]) => `<li><a href="${escapeHtml(byName[name])}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a></li>`)
+        .join("");
+
+      assetsEl.innerHTML = items || `<li>No downloadable assets listed for this release.</li>`;
+
+      const dbAsset = (db.assets || []).find(a => a.name === "tlcid_database.db") || (db.assets || [])[0];
+      const dbDownload = dbAsset ? ` · <a href="${escapeHtml(dbAsset.browser_download_url)}" target="_blank" rel="noopener noreferrer">Download <code>${escapeHtml(dbAsset.name)}</code></a>` : "";
+      dbEl.innerHTML = `Latest database release: <a href="${escapeHtml(db.html_url)}" target="_blank" rel="noopener noreferrer"><code>${escapeHtml(db.tag_name)}</code></a>${dbDownload}`;
+    } catch (error) {
+      appEl.textContent = "Could not load release data right now. Please use the links below.";
+      assetsEl.innerHTML = "";
+      dbEl.textContent = "Could not load database release data right now. Please use the links below.";
+    }
+  }
+
+  loadDownloadData();
+</script>
+</body>
+</html>

@@ -216,6 +216,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Generate web download metadata (no commit)
+        shell: bash
+        run: |
+          python3 scripts/generate_web_download_data.py
+
+      - name: Upload web download metadata artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-download-data
+          path: web/download-data.json
+          if-no-files-found: error
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
