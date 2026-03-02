@@ -134,9 +134,9 @@ class PredictionResultsWindow(QDialog):
             rf_b = db_rf[1] if db_rf and len(db_rf) > 1 else None
             rf_c = db_rf[2] if db_rf and len(db_rf) > 2 else None
 
-            self.table.setItem(row, 1, QTableWidgetItem(f"{rf_a:.3f}" if rf_a is not None else "-"))
-            self.table.setItem(row, 2, QTableWidgetItem(f"{rf_b:.3f}" if rf_b is not None else "-"))
-            self.table.setItem(row, 3, QTableWidgetItem(f"{rf_c:.3f}" if rf_c is not None else "-"))
+            self.table.setItem(row, 1, QTableWidgetItem(f"{rf_a:.2f}" if rf_a is not None else "-"))
+            self.table.setItem(row, 2, QTableWidgetItem(f"{rf_b:.2f}" if rf_b is not None else "-"))
+            self.table.setItem(row, 3, QTableWidgetItem(f"{rf_c:.2f}" if rf_c is not None else "-"))
 
             # Match score
             score_item = QTableWidgetItem(f"{score:.6f}")
