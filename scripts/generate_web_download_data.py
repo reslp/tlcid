@@ -13,7 +13,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT_PATH = ROOT / "web" / "download-data.json"
+OUT_PATH = ROOT / "docs" / "download-data.json"
 
 APP_URL = "https://api.github.com/repos/reslp/tlcid/releases/latest"
 DB_URL = "https://api.github.com/repos/reslp/tlcid-database/releases/latest"
