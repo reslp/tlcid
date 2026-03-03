@@ -86,8 +86,44 @@ class DatabaseTableWindow(QWidget):
         # Stretch last column or resize to contents
         header = self.view.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+
+        # Custom column order/width for Substances table
+        if self.table_name == "Substances":
+            self._configure_substances_columns()
         
         self.layout.addWidget(self.view)
+
+    def _configure_substances_columns(self):
+        """Set preferred display order for Substances and shrink name column."""
+        header = self.view.horizontalHeader()
+
+        preferred = ["name", "A", "Bprime", "C", "B"]
+        field_count = self.model.columnCount()
+
+        # Keep all remaining columns in their original model order
+        preferred_indices = []
+        used = set()
+        for col in preferred:
+            idx = self.model.fieldIndex(col)
+            if idx != -1 and idx not in used:
+                preferred_indices.append(idx)
+                used.add(idx)
+
+        remaining_indices = [i for i in range(field_count) if i not in used]
+        target_order = preferred_indices + remaining_indices
+
+        # Move sections to match target visual order
+        for target_visual, logical_idx in enumerate(target_order):
+            current_visual = header.visualIndex(logical_idx)
+            if current_visual != target_visual:
+                header.moveSection(current_visual, target_visual)
+
+        # Resize to contents first, then reduce name column width to ~2/3
+        self.view.resizeColumnsToContents()
+        name_idx = self.model.fieldIndex("name")
+        if name_idx != -1:
+            current_width = self.view.columnWidth(name_idx)
+            self.view.setColumnWidth(name_idx, max(60, int(current_width * (2 / 3))))
         
     def closeEvent(self, event):
         # Optional: cleanup or hide
