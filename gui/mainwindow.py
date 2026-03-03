@@ -1439,7 +1439,7 @@ class MainWindow(QMainWindow):
             color = self.colors[(sid - 1) % len(self.colors)]
             self.activate_marking_mode(sid, color, f"Substance {sid}")
         else:
-            self.mark_substance_button.setText("Mark Substance")
+            self.mark_substance_button.setText("New Substance")
             self.deactivate_marking_mode()
 
     def toggle_mark_atranorin(self, checked):
