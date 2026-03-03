@@ -549,7 +549,7 @@ class MainWindow(QMainWindow):
         
         self.reference_substances_label = QLabel()
         self.reference_substances_label.setStyleSheet("color: gray; padding-left: 10px;")
-        self.reference_substances_label.setText("<b>Reference Substances:</b>")
+        self.reference_substances_label.setText("<b>Mark known substances as references:</b>")
         row1_layout.addWidget(self.reference_substances_label)
         row1_layout.addStretch()
         toolbar_left_col.addLayout(row1_layout)
@@ -590,40 +590,51 @@ class MainWindow(QMainWindow):
         
         row2_layout.addStretch()
         toolbar_left_col.addLayout(row2_layout)
-        
-        # Row 3: "Mark Substance" button
+
+        # Row 5: Label for Reference Substances
         row3_layout = QHBoxLayout()
         row3_layout.setSpacing(5)
         
-        self.mark_substance_button = QPushButton("Mark Substance")
-        self.mark_substance_button.setCheckable(True)
-        self.mark_substance_button.clicked.connect(self.toggle_mark_substance)
-        row3_layout.addWidget(self.mark_substance_button)
-        
+        self.reference_substances_label = QLabel()
+        self.reference_substances_label.setStyleSheet("color: gray; padding-left: 10px;")
+        self.reference_substances_label.setText("<b>Mark unknown substances:</b>")
+        row3_layout.addWidget(self.reference_substances_label)
         row3_layout.addStretch()
         toolbar_left_col.addLayout(row3_layout)
         
-        # Row 3: Label with Method and Calibration settings dropdown menu
+        # Row 4: "Mark Substance" button
         row4_layout = QHBoxLayout()
         row4_layout.setSpacing(5)
+        
+        self.mark_substance_button = QPushButton("New Substance")
+        self.mark_substance_button.setCheckable(True)
+        self.mark_substance_button.clicked.connect(self.toggle_mark_substance)
+        row4_layout.addWidget(self.mark_substance_button)
+        
+        row4_layout.addStretch()
+        toolbar_left_col.addLayout(row4_layout)
+        
+        # Row 5: Label with Method and Calibration settings dropdown menu
+        row5_layout = QHBoxLayout()
+        row5_layout.setSpacing(5)
 
         
         # Detection Status Label
         self.detection_status_label = QLabel()
         self.detection_status_label.setStyleSheet("color: gray; padding-left: 10px;")
-        row4_layout.addWidget(self.detection_status_label)
+        row5_layout.addWidget(self.detection_status_label)
 
         # Calibration Setting Dropdown
         calibration_label = QLabel("Calibration setting:")
         calibration_label.setStyleSheet("padding-left: 15px;")
-        row4_layout.addWidget(calibration_label)
+        row5_layout.addWidget(calibration_label)
 
         self.calibration_combo = QComboBox()
         self.calibration_combo.addItem("Linear interpolation")
         self.calibration_combo.addItem("Nearest reference")
         self.calibration_combo.setToolTip("Linear interpolation: uses standard Rf values as anchor points for Rf correction.\nNearest reference: corrects Rf based on the single closest reference substance.")
         self.calibration_combo.currentTextChanged.connect(self.on_calibration_mode_changed)
-        row4_layout.addWidget(self.calibration_combo)
+        row5_layout.addWidget(self.calibration_combo)
 
         # Inline Range control in Main Window
         self.range_main = QDoubleSpinBox()
@@ -631,12 +642,12 @@ class MainWindow(QMainWindow):
         self.range_main.setSingleStep(0.01)
         self.range_main.setValue(self.detection_range)
         self.range_main.valueChanged.connect(self.on_main_range_changed)
-        row4_layout.addWidget(self.range_main)
+        row5_layout.addWidget(self.range_main)
 
         self.update_detection_status_label()
         
-        row4_layout.addStretch()
-        toolbar_left_col.addLayout(row4_layout)
+        row5_layout.addStretch()
+        toolbar_left_col.addLayout(row5_layout)
         
         # Add left column to main toolbar layout
         toolbar_hlayout.addLayout(toolbar_left_col)
@@ -1439,7 +1450,7 @@ class MainWindow(QMainWindow):
             self.mark_atranorin_button.setText("Stop Ref (Atr)")
             self.activate_marking_mode(0, QColor("red"), "Atranorin (Ref)")
         else:
-            self.mark_atranorin_button.setText("Mark Atranorin")
+            self.mark_atranorin_button.setText("Atranorin")
             self.deactivate_marking_mode()
 
     def toggle_mark_norstictic(self, checked):
@@ -1450,7 +1461,7 @@ class MainWindow(QMainWindow):
             self.mark_norstictic_button.setText("Stop Ref (Nor)")
             self.activate_marking_mode(-1, QColor("gold"), "Norstictic Acid (Ref)")
         else:
-            self.mark_norstictic_button.setText("Mark Norstictic")
+            self.mark_norstictic_button.setText("Norstictic")
             self.deactivate_marking_mode()
 
     def toggle_mark_rhizocarpic(self, checked):
@@ -1461,7 +1472,7 @@ class MainWindow(QMainWindow):
             self.mark_rhizocarpic_button.setText("Stop Ref (Rhi)")
             self.activate_marking_mode(-2, QColor("orange"), "Rhizocarpic Acid (Ref)")
         else:
-            self.mark_rhizocarpic_button.setText("Mark Rhizocarpic Acid")
+            self.mark_rhizocarpic_button.setText("Rhizocarpic Acid")
             self.deactivate_marking_mode()
 
     def toggle_mark_lecanoric(self, checked):
@@ -1472,7 +1483,7 @@ class MainWindow(QMainWindow):
             self.mark_lecanoric_button.setText("Stop Ref (Lec)")
             self.activate_marking_mode(-3, QColor("limegreen"), "Lecanoric Acid (Ref)")
         else:
-            self.mark_lecanoric_button.setText("Mark Lecanoric Acid")
+            self.mark_lecanoric_button.setText("Lecanoric Acid")
             self.deactivate_marking_mode()
 
     def toggle_mark_evernic(self, checked):
@@ -1483,7 +1494,7 @@ class MainWindow(QMainWindow):
             self.mark_evernic_button.setText("Stop Ref (Eve)")
             self.activate_marking_mode(-4, QColor("magenta"), "Evernic Acid (Ref)")
         else:
-            self.mark_evernic_button.setText("Mark Evernic Acid")
+            self.mark_evernic_button.setText("Evernic Acid")
             self.deactivate_marking_mode()
 
     def toggle_mark_zeorin(self, checked):
@@ -1494,7 +1505,7 @@ class MainWindow(QMainWindow):
             self.mark_zeorin_button.setText("Stop Ref (Zeo)")
             self.activate_marking_mode(-5, QColor("purple"), "Zeorin (Ref)")
         else:
-            self.mark_zeorin_button.setText("Mark Zeorin")
+            self.mark_zeorin_button.setText("Zeorin")
             self.deactivate_marking_mode()
     
     def update_results_display(self):
