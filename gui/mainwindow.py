@@ -5,6 +5,8 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
+from urllib.parse import quote, unquote
+import html
 
 class SquareLabel(QLabel):
     linesMoved = pyqtSignal(float, float) # Signal emitting (start_y, front_y)
@@ -971,7 +973,7 @@ class MainWindow(QMainWindow):
 
     def handle_link_click(self, link):
         if link.startswith("substance:"):
-            name = link.split(":", 1)[1]
+            name = unquote(link.split(":", 1)[1])
             from gui.substance_detail_window import SubstanceDetailWindow
             from PyQt6.QtSql import QSqlDatabase
             
@@ -1984,8 +1986,12 @@ class MainWindow(QMainWindow):
                  display_matches = matches[:5]
                  match_links = []
                  for score, name in display_matches:
-                     # Add title attribute with score for hover tooltip
-                     match_links.append(f"<a href='substance:{name}' title='Match score: {score:.6f}'>{name}</a>")
+                     # URL-encode link targets so special characters (e.g. apostrophes) don't break HTML links
+                     encoded_name = quote(name, safe='')
+                     display_name = html.escape(name)
+                     match_links.append(
+                         f'<a href="substance:{encoded_name}" title="Match score: {score:.6f}">{display_name}</a>'
+                     )
                  match_str = ", ".join(match_links)
                  
                  if len(matches) > 5:
