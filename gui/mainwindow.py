@@ -345,7 +345,7 @@ class ImageSlot(QWidget):
             if not pixmap.isNull():
                 self.image_label.set_image(pixmap)
 
-    def get_marked_pixmap(self):
+    def get_marked_pixmap(self, label_font_size_delta=0):
         """Return a QPixmap of the original image with all annotations drawn on it,
         or None if no image is loaded."""
         if not self.image_path or not self.image_label._original_pixmap:
@@ -433,7 +433,8 @@ class ImageSlot(QWidget):
                 font = painter.font()
                 # Use per-sample font size if available, otherwise default
                 font_size = self.image_label.global_font_sizes.get(sid, 9)
-                font.setPointSize(int(font_size * scale_factor))
+                effective_font_size = max(1, font_size + label_font_size_delta)
+                font.setPointSize(int(effective_font_size * scale_factor))
                 painter.setFont(font)
                 painter.drawText(px + spot_radius + int(5 * scale_factor), py - int(5 * scale_factor), name)
             
@@ -1314,7 +1315,7 @@ class MainWindow(QMainWindow):
         pixmaps = []
         labels = []
         for i, slot in enumerate(self.slots):
-            pm = slot.get_marked_pixmap()
+            pm = slot.get_marked_pixmap(label_font_size_delta=10)
             if pm is not None:
                 pixmaps.append(pm)
                 labels.append(self.plate_labels[i])
