@@ -291,9 +291,9 @@ class PDFReportGenerator:
 
             for rank, (score, name) in enumerate(matches, start=1):
                 rf_vals = self.window.get_substance_rf_from_db(name) or [None, None, None]
-                rf_a = "-" if rf_vals[0] is None else f"{rf_vals[0]:.2f}"
-                rf_b = "-" if rf_vals[1] is None else f"{rf_vals[1]:.2f}"
-                rf_c = "-" if rf_vals[2] is None else f"{rf_vals[2]:.2f}"
+                rf_a = self.window.format_rf_value(rf_vals[0])
+                rf_b = self.window.format_rf_value(rf_vals[1])
+                rf_c = self.window.format_rf_value(rf_vals[2])
                 row_values = [
                     str(rank),
                     str(name),
