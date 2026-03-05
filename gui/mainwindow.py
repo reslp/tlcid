@@ -8,6 +8,8 @@ from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
 from urllib.parse import quote, unquote
 import html
 
+from gui.report_generator import PDFReportGenerator
+
 class SquareLabel(QLabel):
     linesMoved = pyqtSignal(float, float) # Signal emitting (start_y, front_y)
     spotsChanged = pyqtSignal(list) # Signal emitting list of spots data
@@ -961,6 +963,10 @@ class MainWindow(QMainWindow):
         export_combined_action.triggered.connect(self.export_combined_image)
         analysis_menu.addAction(export_combined_action)
 
+        generate_report_action = QAction("Generate Report", self)
+        generate_report_action.triggered.connect(self.generate_report)
+        analysis_menu.addAction(generate_report_action)
+
         # Reference Menu
         ref_menu = menu_bar.addMenu("Reference")
         
@@ -1151,11 +1157,46 @@ class MainWindow(QMainWindow):
             slot.image_label.set_global_colors(color_map)
             slot.image_label.set_add_sample_mode(True, sid)
 
+    def _read_database_created_text(self, cur):
+        """Read DB creation timestamp text from metadata table (if available)."""
+        import sqlite3
+        from datetime import datetime
+
+        try:
+            cur.execute("PRAGMA table_info(metadata)")
+            cols = [row[1] for row in cur.fetchall()]
+            created_col = None
+            for candidate in ("created_at", "created", "creation_date", "created_on", "date_created"):
+                if candidate in cols:
+                    created_col = candidate
+                    break
+
+            if not created_col:
+                return None
+
+            cur.execute(f'SELECT "{created_col}" FROM metadata WHERE "{created_col}" IS NOT NULL LIMIT 1')
+            row = cur.fetchone()
+            if not row or row[0] is None:
+                return None
+
+            raw_value = str(row[0]).strip()
+            if not raw_value:
+                return None
+
+            if raw_value.isdigit():
+                try:
+                    return datetime.fromtimestamp(int(raw_value)).strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    pass
+
+            return raw_value
+        except sqlite3.Error:
+            return None
+
     def _collect_database_about_info(self):
         """Collect lightweight database info for display in the About dialog."""
         import os
         import sqlite3
-        from datetime import datetime
 
         info_lines = []
         db_path = getattr(self, 'db_path', None)
@@ -1183,30 +1224,7 @@ class MainWindow(QMainWindow):
                     info_lines.append(f"{table} rows: {row_count}")
 
             if "metadata" in table_names:
-                metadata_created = None
-                try:
-                    cur.execute("PRAGMA table_info(metadata)")
-                    cols = [row[1] for row in cur.fetchall()]
-                    created_col = None
-                    for candidate in ("created_at", "created", "creation_date", "created_on", "date_created"):
-                        if candidate in cols:
-                            created_col = candidate
-                            break
-
-                    if created_col:
-                        cur.execute(f'SELECT "{created_col}" FROM metadata WHERE "{created_col}" IS NOT NULL LIMIT 1')
-                        row = cur.fetchone()
-                        if row and row[0] is not None:
-                            raw_value = str(row[0]).strip()
-                            metadata_created = raw_value
-                            try:
-                                if raw_value.isdigit():
-                                    metadata_created = datetime.fromtimestamp(int(raw_value)).strftime("%Y-%m-%d %H:%M:%S")
-                            except Exception:
-                                pass
-                except sqlite3.Error:
-                    pass
-
+                metadata_created = self._read_database_created_text(cur)
                 if metadata_created:
                     info_lines.append(f"Database created: {metadata_created}")
                 else:
@@ -1327,32 +1345,25 @@ class MainWindow(QMainWindow):
         self.species_window = SpeciesPredictionWindow(prediction_data, db)
         self.species_window.show()
 
-    def export_combined_image(self):
-        """Export a combined image of all three plates (A, B', C) side by side,
-        including all marked spots, lines, and substance names."""
+    def _build_combined_export_image(self, label_font_size_delta=10):
+        """Build combined plate image used by export/report. Returns QImage or None."""
         from PyQt6.QtGui import QImage, QFont
 
-        # Collect marked pixmaps from all slots that have images loaded
         pixmaps = []
         labels = []
         for i, slot in enumerate(self.slots):
-            pm = slot.get_marked_pixmap(label_font_size_delta=10)
+            pm = slot.get_marked_pixmap(label_font_size_delta=label_font_size_delta)
             if pm is not None:
                 pixmaps.append(pm)
                 labels.append(self.plate_labels[i])
 
         if not pixmaps:
-            QMessageBox.warning(self, "No Images", "No plate images are loaded. Please load at least one image before exporting.")
-            return
+            return None
 
-        # Calculate combined canvas dimensions
-        # Use uniform height (max height among all plates) and scale each plate proportionally
-        padding = 20  # px between plates
-        label_height = 40  # px reserved for plate label at top
-
+        padding = 20
+        label_height = 40
         max_h = max(pm.height() for pm in pixmaps)
 
-        # Scale each pixmap to the same height while preserving aspect ratio
         scaled_pixmaps = []
         for pm in pixmaps:
             if pm.height() != max_h:
@@ -1364,37 +1375,80 @@ class MainWindow(QMainWindow):
         total_w = sum(pm.width() for pm in scaled_pixmaps) + padding * (len(scaled_pixmaps) - 1)
         total_h = max_h + label_height
 
-        # Create the combined canvas
         combined = QImage(total_w, total_h, QImage.Format.Format_RGB32)
         combined.fill(QColor("white"))
 
         painter = QPainter(combined)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Draw each plate and its label
         x_offset = 0
         label_font = QFont()
         label_font_size = max(14, int(max_h / 40))
         label_font.setPointSize(label_font_size)
         label_font.setBold(True)
 
-        for idx, (pm, label) in enumerate(zip(scaled_pixmaps, labels)):
-            # Draw plate label centered above the image
+        for pm, label in zip(scaled_pixmaps, labels):
             painter.setFont(label_font)
             painter.setPen(QColor("black"))
             text_rect = painter.fontMetrics().boundingRect(label)
             text_x = x_offset + (pm.width() - text_rect.width()) // 2
             text_y = label_height - 8
             painter.drawText(text_x, text_y, label)
-
-            # Draw the plate image below the label
             painter.drawPixmap(x_offset, label_height, pm)
-
             x_offset += pm.width() + padding
 
         painter.end()
+        return combined
 
-        # Save dialog
+    def get_database_version_text(self):
+        """Best-effort database version text for reports (align with About dialog)."""
+        import os
+        import sqlite3
+
+        db_path = getattr(self, 'db_path', None)
+        if not db_path or not os.path.exists(db_path):
+            return "unknown"
+
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
+            has_meta = cur.fetchone() is not None
+
+            if has_meta:
+                metadata_created = self._read_database_created_text(cur)
+                if metadata_created:
+                    conn.close()
+                    return metadata_created
+
+            cur.execute("PRAGMA user_version")
+            row = cur.fetchone()
+            conn.close()
+            if row and int(row[0]) > 0:
+                return f"user_version={int(row[0])}"
+        except Exception:
+            pass
+
+        return "unknown"
+
+    def generate_report(self):
+        """Generate PDF report with combined image, top predictions table, and metadata."""
+        PDFReportGenerator(self).generate()
+
+    def _find_row_by_sid(self, sid):
+        for row in range(self.results_table.rowCount()):
+            item = self.results_table.item(row, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole) == sid:
+                return row
+        return None
+
+    def export_combined_image(self):
+        """Export a combined image of all loaded plates with markings."""
+        combined = self._build_combined_export_image(label_font_size_delta=10)
+        if combined is None:
+            QMessageBox.warning(self, "No Images", "No plate images are loaded. Please load at least one image before exporting.")
+            return
+
         file_name, _ = QFileDialog.getSaveFileName(
             self, "Export Combined Image", "", "PNG Images (*.png);;JPEG Images (*.jpg)"
         )
@@ -1543,6 +1597,18 @@ class MainWindow(QMainWindow):
             self.deactivate_marking_mode()
     
     def update_results_display(self):
+        import sys
+
+        def _safe_print(*args, **kwargs):
+            try:
+                print(*args, **kwargs)
+            except UnicodeEncodeError:
+                sep = kwargs.get("sep", " ")
+                end = kwargs.get("end", "\n")
+                text = sep.join(str(a) for a in args)
+                enc = (getattr(sys.stdout, "encoding", None) or "utf-8")
+                safe = text.encode(enc, errors="backslashreplace").decode(enc, errors="replace")
+                print(safe, end=end)
         # Aggregate data from all slots
         # Map: Sample ID -> { Plate Index -> [rf1, rf2, ...] }
         aggregated = {}
@@ -1561,7 +1627,7 @@ class MainWindow(QMainWindow):
             spots = slot.image_label.spots # list of dicts
             for spot in spots:
                 # Debug print for spots
-                print(f"DEBUG: Spot on Plate {i}: {spot}")
+                _safe_print(f"DEBUG: Spot on Plate {i}: {spot}")
                 sid = spot['sample_id']
                 raw_y = spot['y']
                 u_spot = 1.0 - raw_y
@@ -1600,12 +1666,12 @@ class MainWindow(QMainWindow):
                 ids_to_remove.append(sid)
 
         if ids_to_remove:
-            print(f"DEBUG: Removing substances {ids_to_remove} (no spots remaining)")
+            _safe_print(f"DEBUG: Removing substances {ids_to_remove} (no spots remaining)")
         else:
-            print(f"DEBUG: No substances to remove. aggregated={sorted(aggregated.keys())}, samples={sorted(self.samples.keys())}")
+            _safe_print(f"DEBUG: No substances to remove. aggregated={sorted(aggregated.keys())}, samples={sorted(self.samples.keys())}")
 
         for sid in ids_to_remove:
-            print(f"DEBUG: Removing substance ID {sid}")
+            _safe_print(f"DEBUG: Removing substance ID {sid}")
             self.samples.pop(sid)
             # Close any open characteristics window for this sample
             if sid in self.char_windows:
@@ -1627,7 +1693,7 @@ class MainWindow(QMainWindow):
             sdata['last_matches'] = []
         
         # Debug print for aggregated data
-        print(f"DEBUG: Aggregated Rf values: {aggregated}")
+        _safe_print(f"DEBUG: Aggregated Rf values: {aggregated}")
 
         # Check for auto-stop if currently marking
         if self.mark_substance_button.isChecked():
@@ -1708,22 +1774,22 @@ class MainWindow(QMainWindow):
                     for idx, vals in aggregated[sid].items():
                         if vals and idx < len(ref_rf) and ref_rf[idx] is not None:
                             active_standards[idx].append((vals[0], ref_rf[idx]))
-                            print(f"DEBUG: Added reference substance {sid} (name: {sdata.get('assigned_name')}) to plate {idx} calibration: observed={vals[0]:.3f}, std={ref_rf[idx]:.3f}")
+                            _safe_print(f"DEBUG: Added reference substance {sid} (name: {sdata.get('assigned_name')}) to plate {idx} calibration: observed={vals[0]:.3f}, std={ref_rf[idx]:.3f}")
 
         for idx in active_standards:
             active_standards[idx].sort(key=lambda x: x[0])
 
         # Debug output: Show which reference substances are used for each plate
-        print("=" * 80)
-        print("CALIBRATION REFERENCE SUBSTANCES PER PLATE")
-        print("=" * 80)
+        _safe_print("=" * 80)
+        _safe_print("CALIBRATION REFERENCE SUBSTANCES PER PLATE")
+        _safe_print("=" * 80)
         for idx in [0, 1, 2]:
             standards = active_standards[idx]
-            print(f"\nPlate {['A', 'B', 'C'][idx]}:")
+            _safe_print(f"\nPlate {['A', 'B', 'C'][idx]}:")
             if not standards:
-                print("  No reference standards active - using raw Rf values")
+                _safe_print("  No reference standards active - using raw Rf values")
             else:
-                print("  Calibration points (observed Rf -> standard Rf):")
+                _safe_print("  Calibration points (observed Rf -> standard Rf):")
                 # Identify which reference substances are being used
                 for obs, std in standards:
                     # Identify which standard this is
@@ -1748,8 +1814,8 @@ class MainWindow(QMainWindow):
                                 if idx < len(ref_rf) and ref_rf[idx] == std:
                                     std_name = sdata.get('assigned_name', f"Substance {sid}")
                                     break
-                    print(f"    {std_name}: {obs:.3f} -> {std:.3f}")
-        print("=" * 80)
+                    _safe_print(f"    {std_name}: {obs:.3f} -> {std:.3f}")
+        _safe_print("=" * 80)
 
         # Store Scroll Position
         v_scroll = self.results_table.verticalScrollBar().value()
@@ -1760,9 +1826,9 @@ class MainWindow(QMainWindow):
         sorted_ids = sorted(aggregated.keys())
 
         # Print debug header for predictions
-        print("=" * 80)
-        print("SUBSTANCE PREDICTIONS")
-        print("=" * 80)
+        _safe_print("=" * 80)
+        _safe_print("SUBSTANCE PREDICTIONS")
+        _safe_print("=" * 80)
 
         for sid in sorted_ids:
             if sid not in self.samples:
@@ -1967,20 +2033,20 @@ class MainWindow(QMainWindow):
 
             # Print debug output for this substance's calibration
             if sid > 0 and calibration_info:
-                print(f"\nSubstance: {self.samples[sid].get('assigned_name') or self.samples[sid]['name']}")
-                print("-" * 80)
+                _safe_print(f"\nSubstance: {self.samples[sid].get('assigned_name') or self.samples[sid]['name']}")
+                _safe_print("-" * 80)
                 for cal in calibration_info:
-                    print(f"  Plate {cal['plate']}: Rf raw={cal['raw']:.3f} -> corrected={cal['corrected']:.3f} (mode: {cal['mode']})")
+                    _safe_print(f"  Plate {cal['plate']}: Rf raw={cal['raw']:.3f} -> corrected={cal['corrected']:.3f} (mode: {cal['mode']})")
                     if cal['standards']:
                         # Show which reference substance(s) were used for Rf correction
                         if len(cal['standards']) == 1:
-                            print(f"    Rf correction using reference: {cal['standards'][0]}")
+                            _safe_print(f"    Rf correction using reference: {cal['standards'][0]}")
                         else:
-                            print(f"    Rf correction using references: {' and '.join(cal['standards'])}")
-                            print(f"    (Interpolation between calibration points)")
+                            _safe_print(f"    Rf correction using references: {' and '.join(cal['standards'])}")
+                            _safe_print(f"    (Interpolation between calibration points)")
                     else:
-                        print(f"    No Rf correction applied (no reference standards on this plate)")
-                print("-" * 80)
+                        _safe_print(f"    No Rf correction applied (no reference standards on this plate)")
+                _safe_print("-" * 80)
             
             # 3. Predictions
             matches = []
@@ -2003,14 +2069,14 @@ class MainWindow(QMainWindow):
                                                filter_aft_uv=f_aft_uv)
 
                 # Print prediction results
-                print(f"  Predictions ({len(matches)} match{'es' if len(matches) != 1 else ''}):")
+                _safe_print(f"  Predictions ({len(matches)} match{'es' if len(matches) != 1 else ''}):")
                 if matches:
                     for i, (score, name) in enumerate(matches[:10], 1):  # Show first 10
-                        print(f"    {i}. {name} (score: {score:.6f})")
+                        _safe_print(f"    {i}. {name} (score: {score:.6f})")
                     if len(matches) > 10:
-                        print(f"    ... and {len(matches) - 10} more")
+                        _safe_print(f"    ... and {len(matches) - 10} more")
                 else:
-                    print(f"    No matches found")
+                    _safe_print(f"    No matches found")
 
             pred_label = QLabel()
             self.samples[sid]['last_matches'] = matches
@@ -2098,10 +2164,10 @@ class MainWindow(QMainWindow):
             slot.image_label.set_global_font_sizes(font_size_map)
 
         # Print closing summary
-        print("=" * 80)
-        print(f"PREDICTION COMPLETE: Processed {len([sid for sid in sorted_ids if sid > 0])} substances")
-        print("=" * 80)
-        print()
+        _safe_print("=" * 80)
+        _safe_print(f"PREDICTION COMPLETE: Processed {len([sid for sid in sorted_ids if sid > 0])} substances")
+        _safe_print("=" * 80)
+        _safe_print()
 
         # Update reference button colors when marked on all three plates
         self._update_reference_button_colors(aggregated)
