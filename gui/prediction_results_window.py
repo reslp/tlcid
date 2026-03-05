@@ -69,6 +69,17 @@ class PredictionResultsWindow(QDialog):
 
         return None
 
+
+    def format_rf_value(self, value):
+        if value is None:
+            return "-"
+        relative = False
+        if self.parent() is not None and hasattr(self.parent(), "relative_rf_display"):
+            relative = self.parent().relative_rf_display
+        if relative:
+            return f"{value * 100:.0f}"
+        return f"{value:.2f}"
+
     def setup_ui(self):
         layout = QVBoxLayout()
         self.setLayout(layout)
@@ -134,9 +145,9 @@ class PredictionResultsWindow(QDialog):
             rf_b = db_rf[1] if db_rf and len(db_rf) > 1 else None
             rf_c = db_rf[2] if db_rf and len(db_rf) > 2 else None
 
-            self.table.setItem(row, 1, QTableWidgetItem(f"{rf_a:.2f}" if rf_a is not None else "-"))
-            self.table.setItem(row, 2, QTableWidgetItem(f"{rf_b:.2f}" if rf_b is not None else "-"))
-            self.table.setItem(row, 3, QTableWidgetItem(f"{rf_c:.2f}" if rf_c is not None else "-"))
+            self.table.setItem(row, 1, QTableWidgetItem(self.format_rf_value(rf_a)))
+            self.table.setItem(row, 2, QTableWidgetItem(self.format_rf_value(rf_b)))
+            self.table.setItem(row, 3, QTableWidgetItem(self.format_rf_value(rf_c)))
 
             # Match score
             score_item = QTableWidgetItem(f"{score:.6f}")

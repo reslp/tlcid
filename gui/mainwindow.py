@@ -289,15 +289,14 @@ class ImageSlot(QWidget):
         title_layout.addWidget(self.title_label)
 
         # Range SpinBox (per-plate)
+        self.relative_rf_display = False
         self.range_spin = QDoubleSpinBox()
-        self.range_spin.setRange(0.0, 1.0)
-        self.range_spin.setSingleStep(0.01)
-        self.range_spin.setValue(0.05)
         self.range_spin.setPrefix("±")
-        self.range_spin.setSuffix(" Rf")
         self.range_spin.setToolTip(f"Range tolerance for plate {title}")
         self.range_spin.setMaximumWidth(80)  # Reduced width to 1/3 of previous (120/3)
         self.range_spin.valueChanged.connect(self._on_range_changed)
+        self.set_relative_rf_display(False)
+        self.set_range(0.05)
         title_layout.addWidget(self.range_spin)
 
         self.layout.addLayout(title_layout)
@@ -322,18 +321,39 @@ class ImageSlot(QWidget):
         controls_layout.addWidget(self.export_button)
 
     def _on_range_changed(self, value):
-        """Emit signal when the per-plate range changes."""
-        self.rangeChanged.emit(self.plate_index, value)
+        """Emit signal when the per-plate range changes (normalized 0.0-1.0)."""
+        normalized = value / 100.0 if self.relative_rf_display else value
+        self.rangeChanged.emit(self.plate_index, normalized)
+
+    def set_relative_rf_display(self, enabled):
+        """Switch per-plate range control between 0.0-1.0 and 0-100 display."""
+        current = self.get_range()
+        self.relative_rf_display = enabled
+        self.range_spin.blockSignals(True)
+        if enabled:
+            self.range_spin.setRange(0.0, 100.0)
+            self.range_spin.setSingleStep(1.0)
+            self.range_spin.setDecimals(0)
+            self.range_spin.setSuffix(" %")
+        else:
+            self.range_spin.setRange(0.0, 1.0)
+            self.range_spin.setSingleStep(0.01)
+            self.range_spin.setDecimals(2)
+            self.range_spin.setSuffix(" Rf")
+        self.range_spin.blockSignals(False)
+        self.set_range(current)
 
     def set_range(self, value):
-        """Set the range spinbox value without triggering the signal."""
+        """Set the range spinbox value without triggering the signal (input: 0.0-1.0)."""
+        display_value = (value * 100.0) if self.relative_rf_display else value
         self.range_spin.blockSignals(True)
-        self.range_spin.setValue(value)
+        self.range_spin.setValue(display_value)
         self.range_spin.blockSignals(False)
 
     def get_range(self):
-        """Get the current range value."""
-        return self.range_spin.value()
+        """Get current normalized range value (0.0-1.0)."""
+        value = self.range_spin.value()
+        return value / 100.0 if self.relative_rf_display else value
         
     def load_image(self):
         file_name, _ = QFileDialog.getOpenFileName(
@@ -524,6 +544,7 @@ class MainWindow(QMainWindow):
         # Detection Settings
         self.detection_method = "Range"
         self.detection_range = 0.05  # Global default (used as initial value for plates)
+        self.relative_rf_display = False
 
         # Per-plate range settings: {plate_index: range_value}
         self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
@@ -907,10 +928,10 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self.show_about_dialog)
         file_menu.addAction(about_action)
 
-        load_examples_action = QAction("Load Examples", self)
-        load_examples_action.triggered.connect(self.load_examples)
-        file_menu.addAction(load_examples_action)
-        
+        new_analysis_action = QAction("New Analysis", self)
+        new_analysis_action.triggered.connect(self.new_analysis)
+        file_menu.addAction(new_analysis_action)
+
         save_analysis_action = QAction("Save Analysis", self)
         save_analysis_action.triggered.connect(self.save_analysis)
         file_menu.addAction(save_analysis_action)
@@ -919,18 +940,18 @@ class MainWindow(QMainWindow):
         load_analysis_action.triggered.connect(self.load_analysis)
         file_menu.addAction(load_analysis_action)
         
-        new_analysis_action = QAction("New Analysis", self)
-        new_analysis_action.triggered.connect(self.new_analysis)
-        file_menu.addAction(new_analysis_action)
-
+        load_examples_action = QAction("Load Examples", self)
+        load_examples_action.triggered.connect(self.load_examples)
+        file_menu.addAction(load_examples_action)
 
 
         # Analysis Menu
         analysis_menu = menu_bar.addMenu("Analysis")
         
-        substance_detection_action = QAction("Substance Detection", self)
-        substance_detection_action.triggered.connect(self.show_settings_window)
-        analysis_menu.addAction(substance_detection_action)
+        settings_action = QAction("Settings", self)
+        settings_action.setMenuRole(QAction.MenuRole.NoRole)
+        settings_action.triggered.connect(self.show_settings_window)
+        analysis_menu.addAction(settings_action)
 
         predict_species_action = QAction("Predict species", self)
         predict_species_action.triggered.connect(self.show_species_prediction_window)
@@ -1254,7 +1275,7 @@ class MainWindow(QMainWindow):
             self.settings_window = SettingsWindow()
             self.settings_window.settingsChanged.connect(self.update_detection_settings)
             
-        self.settings_window.set_current_settings(self.detection_method, self.detection_range)
+        self.settings_window.set_current_settings(self.detection_method, self.detection_range, self.relative_rf_display)
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
@@ -1382,9 +1403,19 @@ class MainWindow(QMainWindow):
 
         combined.save(file_name)
 
-    def update_detection_settings(self, method, range_val):
+    def format_rf_value(self, value):
+        if value is None:
+            return "-"
+        if self.relative_rf_display:
+            return f"{value * 100:.0f}"
+        return f"{value:.2f}"
+
+    def update_detection_settings(self, method, range_val, relative_rf=False):
         self.detection_method = method
         self.detection_range = range_val
+        self.relative_rf_display = relative_rf
+        for slot in self.slots:
+            slot.set_relative_rf_display(relative_rf)
         self.update_detection_status_label()
         self.update_results_display()
 
@@ -1928,7 +1959,7 @@ class MainWindow(QMainWindow):
                             })
 
                     prediction_input[plate_idx] = corrected_val
-                    val_str = f"{corrected_val:.2f}"
+                    val_str = self.format_rf_value(corrected_val)
 
                 item = QTableWidgetItem(val_str)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
