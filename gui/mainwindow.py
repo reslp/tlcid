@@ -1566,6 +1566,18 @@ class MainWindow(QMainWindow):
             self.deactivate_marking_mode()
     
     def update_results_display(self):
+        import sys
+
+        def _safe_print(*args, **kwargs):
+            try:
+                print(*args, **kwargs)
+            except UnicodeEncodeError:
+                sep = kwargs.get("sep", " ")
+                end = kwargs.get("end", "\n")
+                text = sep.join(str(a) for a in args)
+                enc = (getattr(sys.stdout, "encoding", None) or "utf-8")
+                safe = text.encode(enc, errors="backslashreplace").decode(enc, errors="replace")
+                print(safe, end=end)
         # Aggregate data from all slots
         # Map: Sample ID -> { Plate Index -> [rf1, rf2, ...] }
         aggregated = {}
@@ -1584,7 +1596,7 @@ class MainWindow(QMainWindow):
             spots = slot.image_label.spots # list of dicts
             for spot in spots:
                 # Debug print for spots
-                print(f"DEBUG: Spot on Plate {i}: {spot}")
+                _safe_print(f"DEBUG: Spot on Plate {i}: {spot}")
                 sid = spot['sample_id']
                 raw_y = spot['y']
                 u_spot = 1.0 - raw_y
@@ -1623,12 +1635,12 @@ class MainWindow(QMainWindow):
                 ids_to_remove.append(sid)
 
         if ids_to_remove:
-            print(f"DEBUG: Removing substances {ids_to_remove} (no spots remaining)")
+            _safe_print(f"DEBUG: Removing substances {ids_to_remove} (no spots remaining)")
         else:
-            print(f"DEBUG: No substances to remove. aggregated={sorted(aggregated.keys())}, samples={sorted(self.samples.keys())}")
+            _safe_print(f"DEBUG: No substances to remove. aggregated={sorted(aggregated.keys())}, samples={sorted(self.samples.keys())}")
 
         for sid in ids_to_remove:
-            print(f"DEBUG: Removing substance ID {sid}")
+            _safe_print(f"DEBUG: Removing substance ID {sid}")
             self.samples.pop(sid)
             # Close any open characteristics window for this sample
             if sid in self.char_windows:
@@ -1650,7 +1662,7 @@ class MainWindow(QMainWindow):
             sdata['last_matches'] = []
         
         # Debug print for aggregated data
-        print(f"DEBUG: Aggregated Rf values: {aggregated}")
+        _safe_print(f"DEBUG: Aggregated Rf values: {aggregated}")
 
         # Check for auto-stop if currently marking
         if self.mark_substance_button.isChecked():
@@ -1731,22 +1743,22 @@ class MainWindow(QMainWindow):
                     for idx, vals in aggregated[sid].items():
                         if vals and idx < len(ref_rf) and ref_rf[idx] is not None:
                             active_standards[idx].append((vals[0], ref_rf[idx]))
-                            print(f"DEBUG: Added reference substance {sid} (name: {sdata.get('assigned_name')}) to plate {idx} calibration: observed={vals[0]:.3f}, std={ref_rf[idx]:.3f}")
+                            _safe_print(f"DEBUG: Added reference substance {sid} (name: {sdata.get('assigned_name')}) to plate {idx} calibration: observed={vals[0]:.3f}, std={ref_rf[idx]:.3f}")
 
         for idx in active_standards:
             active_standards[idx].sort(key=lambda x: x[0])
 
         # Debug output: Show which reference substances are used for each plate
-        print("=" * 80)
-        print("CALIBRATION REFERENCE SUBSTANCES PER PLATE")
-        print("=" * 80)
+        _safe_print("=" * 80)
+        _safe_print("CALIBRATION REFERENCE SUBSTANCES PER PLATE")
+        _safe_print("=" * 80)
         for idx in [0, 1, 2]:
             standards = active_standards[idx]
-            print(f"\nPlate {['A', 'B', 'C'][idx]}:")
+            _safe_print(f"\nPlate {['A', 'B', 'C'][idx]}:")
             if not standards:
-                print("  No reference standards active - using raw Rf values")
+                _safe_print("  No reference standards active - using raw Rf values")
             else:
-                print("  Calibration points (observed Rf -> standard Rf):")
+                _safe_print("  Calibration points (observed Rf -> standard Rf):")
                 # Identify which reference substances are being used
                 for obs, std in standards:
                     # Identify which standard this is
@@ -1771,8 +1783,8 @@ class MainWindow(QMainWindow):
                                 if idx < len(ref_rf) and ref_rf[idx] == std:
                                     std_name = sdata.get('assigned_name', f"Substance {sid}")
                                     break
-                    print(f"    {std_name}: {obs:.3f} -> {std:.3f}")
-        print("=" * 80)
+                    _safe_print(f"    {std_name}: {obs:.3f} -> {std:.3f}")
+        _safe_print("=" * 80)
 
         # Store Scroll Position
         v_scroll = self.results_table.verticalScrollBar().value()
@@ -1783,9 +1795,9 @@ class MainWindow(QMainWindow):
         sorted_ids = sorted(aggregated.keys())
 
         # Print debug header for predictions
-        print("=" * 80)
-        print("SUBSTANCE PREDICTIONS")
-        print("=" * 80)
+        _safe_print("=" * 80)
+        _safe_print("SUBSTANCE PREDICTIONS")
+        _safe_print("=" * 80)
 
         for sid in sorted_ids:
             if sid not in self.samples:
@@ -1990,20 +2002,20 @@ class MainWindow(QMainWindow):
 
             # Print debug output for this substance's calibration
             if sid > 0 and calibration_info:
-                print(f"\nSubstance: {self.samples[sid].get('assigned_name') or self.samples[sid]['name']}")
-                print("-" * 80)
+                _safe_print(f"\nSubstance: {self.samples[sid].get('assigned_name') or self.samples[sid]['name']}")
+                _safe_print("-" * 80)
                 for cal in calibration_info:
-                    print(f"  Plate {cal['plate']}: Rf raw={cal['raw']:.3f} -> corrected={cal['corrected']:.3f} (mode: {cal['mode']})")
+                    _safe_print(f"  Plate {cal['plate']}: Rf raw={cal['raw']:.3f} -> corrected={cal['corrected']:.3f} (mode: {cal['mode']})")
                     if cal['standards']:
                         # Show which reference substance(s) were used for Rf correction
                         if len(cal['standards']) == 1:
-                            print(f"    Rf correction using reference: {cal['standards'][0]}")
+                            _safe_print(f"    Rf correction using reference: {cal['standards'][0]}")
                         else:
-                            print(f"    Rf correction using references: {' and '.join(cal['standards'])}")
-                            print(f"    (Interpolation between calibration points)")
+                            _safe_print(f"    Rf correction using references: {' and '.join(cal['standards'])}")
+                            _safe_print(f"    (Interpolation between calibration points)")
                     else:
-                        print(f"    No Rf correction applied (no reference standards on this plate)")
-                print("-" * 80)
+                        _safe_print(f"    No Rf correction applied (no reference standards on this plate)")
+                _safe_print("-" * 80)
             
             # 3. Predictions
             matches = []
@@ -2026,14 +2038,14 @@ class MainWindow(QMainWindow):
                                                filter_aft_uv=f_aft_uv)
 
                 # Print prediction results
-                print(f"  Predictions ({len(matches)} match{'es' if len(matches) != 1 else ''}):")
+                _safe_print(f"  Predictions ({len(matches)} match{'es' if len(matches) != 1 else ''}):")
                 if matches:
                     for i, (score, name) in enumerate(matches[:10], 1):  # Show first 10
-                        print(f"    {i}. {name} (score: {score:.6f})")
+                        _safe_print(f"    {i}. {name} (score: {score:.6f})")
                     if len(matches) > 10:
-                        print(f"    ... and {len(matches) - 10} more")
+                        _safe_print(f"    ... and {len(matches) - 10} more")
                 else:
-                    print(f"    No matches found")
+                    _safe_print(f"    No matches found")
 
             pred_label = QLabel()
             self.samples[sid]['last_matches'] = matches
@@ -2121,10 +2133,10 @@ class MainWindow(QMainWindow):
             slot.image_label.set_global_font_sizes(font_size_map)
 
         # Print closing summary
-        print("=" * 80)
-        print(f"PREDICTION COMPLETE: Processed {len([sid for sid in sorted_ids if sid > 0])} substances")
-        print("=" * 80)
-        print()
+        _safe_print("=" * 80)
+        _safe_print(f"PREDICTION COMPLETE: Processed {len([sid for sid in sorted_ids if sid > 0])} substances")
+        _safe_print("=" * 80)
+        _safe_print()
 
         # Update reference button colors when marked on all three plates
         self._update_reference_button_colors(aggregated)
