@@ -15,6 +15,8 @@ from PyQt6.QtSql import QSqlQuery
 class SubstanceDetailWindow(QDialog):
     TLC_FIELDS = ["A", "Bprime", "C", "B", "E", "F", "G", "HPLC"]
     VISUAL_FIELDS = ["BefVis", "BefUVS", "BefUVL", "Archers", "AftVis", "AftUV"]
+    SPOT_TEST_FIELDS = ["KResult", "CResult", "KCResult", "PDResult"]
+    SPOT_TEST_LABELS = {"KResult": "K", "CResult": "C", "KCResult": "KC", "PDResult": "PD"}
 
     def __init__(self, substance_name, db):
         super().__init__()
@@ -60,6 +62,19 @@ class SubstanceDetailWindow(QDialog):
 
         form_layout.addRow(label, val_label)
 
+    def _add_spot_test_row(self, form_layout, field_name, value):
+        # Use shortened label from SPOT_TEST_LABELS
+        label_text = self.SPOT_TEST_LABELS.get(field_name, field_name)
+        label = QLabel(label_text)
+        label.setStyleSheet("font-weight: bold;")
+
+        # Display "No Result" if value is empty, otherwise show the value
+        val_label = QLabel(str(value) if value is not None and value != "" else "No Result")
+        val_label.setWordWrap(True)
+        val_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        form_layout.addRow(label, val_label)
+
     def load_data(self, name):
         query = QSqlQuery(self.db)
         query.prepare("SELECT * FROM Substances WHERE name = :name")
@@ -70,6 +85,7 @@ class SubstanceDetailWindow(QDialog):
 
             tlc_group, tlc_layout = self._create_group_box("TLC Characteristics")
             visual_group, visual_layout = self._create_group_box("Visual Characteristics")
+            spot_test_group, spot_test_layout = self._create_group_box("Spot Tests")
             additional_group, additional_layout = self._create_group_box("Additional Substance information")
 
             for i in range(record.count()):
@@ -85,6 +101,8 @@ class SubstanceDetailWindow(QDialog):
                     self._add_value_row(tlc_layout, field_name, value)
                 elif field_name in self.VISUAL_FIELDS:
                     self._add_value_row(visual_layout, field_name, value)
+                elif field_name in self.SPOT_TEST_FIELDS:
+                    self._add_spot_test_row(spot_test_layout, field_name, value)
                 else:
                     self._add_value_row(additional_layout, field_name, value)
 
@@ -92,8 +110,11 @@ class SubstanceDetailWindow(QDialog):
             self.grid_layout.addWidget(tlc_group, 0, 0)
             self.grid_layout.addWidget(visual_group, 0, 1)
 
-            # Row 1: single-column group spanning both columns
-            self.grid_layout.addWidget(additional_group, 1, 0, 1, 2)
+            # Row 1: single-column group for Spot Tests, spanning both columns
+            self.grid_layout.addWidget(spot_test_group, 1, 0, 1, 2)
+
+            # Row 2: single-column group for Additional Substance information, spanning both columns
+            self.grid_layout.addWidget(additional_group, 2, 0, 1, 2)
         else:
             error_group, error_layout = self._create_group_box("Error")
             self._add_value_row(error_layout, "Message", "Substance not found in database.")
