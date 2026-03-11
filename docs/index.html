@@ -141,7 +141,7 @@
       const app = data.app;
       const db = data.database;
 
-      appEl.innerHTML = `Latest TLCid app release: <a href="${escapeHtml(app.html_url)}" target="_blank" rel="noopener noreferrer"><code>${escapeHtml(app.tag_name)}</code></a>`;
+      appEl.innerHTML = `Latest TLCid app release (includes latest database): <a href="${escapeHtml(app.html_url)}" target="_blank" rel="noopener noreferrer"><code>${escapeHtml(app.tag_name)}</code></a>`;
 
       const byName = Object.fromEntries((app.assets || []).map(a => [a.name, a.browser_download_url]));
       const items = preferredAssets
