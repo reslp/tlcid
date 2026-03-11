@@ -536,12 +536,7 @@ class MainWindow(QMainWindow):
             1: 0.60, # Bprime
             2: 0.43  # C
         }
-        # ID -5: Zeorin (hopane-6α,22-diol) (A=52, B=43, C=43)
-        self.zeorin_standards = {
-            0: 0.52, # A
-            1: 0.43, # Bprime
-            2: 0.43  # C
-        }
+
 
         # Detection Settings
         self.detection_method = "Range"
@@ -609,11 +604,6 @@ class MainWindow(QMainWindow):
         self.mark_evernic_button.clicked.connect(self.toggle_mark_evernic)
         row2_layout.addWidget(self.mark_evernic_button)
 
-        self.mark_zeorin_button = QPushButton("Zeorin")
-        self.mark_zeorin_button.setCheckable(True)
-        self.mark_zeorin_button.clicked.connect(self.toggle_mark_zeorin)
-        row2_layout.addWidget(self.mark_zeorin_button)
-        
         row2_layout.addStretch()
         toolbar_left_col.addLayout(row2_layout)
 
@@ -1137,12 +1127,11 @@ class MainWindow(QMainWindow):
         # Helper to uncheck other buttons
         buttons = [
             self.mark_substance_button, 
-            self.mark_atranorin_button, 
+            self.mark_atranorin_button,
             self.mark_norstictic_button,
             self.mark_rhizocarpic_button,
             self.mark_lecanoric_button,
-            self.mark_evernic_button,
-            self.mark_zeorin_button
+            self.mark_evernic_button
         ]
         for btn in buttons:
             if btn != active_btn and btn.isChecked():
@@ -1585,17 +1574,6 @@ class MainWindow(QMainWindow):
             self.mark_evernic_button.setText("Evernic Acid")
             self.deactivate_marking_mode()
 
-    def toggle_mark_zeorin(self, checked):
-        if checked:
-            self.ensure_single_mode(self.mark_zeorin_button)
-            
-            # Zeorin Mode (ID -5)
-            self.mark_zeorin_button.setText("Stop Ref (Zeo)")
-            self.activate_marking_mode(-5, QColor("purple"), "Zeorin (Ref)")
-        else:
-            self.mark_zeorin_button.setText("Zeorin")
-            self.deactivate_marking_mode()
-    
     def update_results_display(self):
         import sys
 
@@ -1721,10 +1699,6 @@ class MainWindow(QMainWindow):
             current_sid = -4 # Evernic Acid ID
             if current_sid in aggregated and len(aggregated[current_sid]) == 3:
                 self.mark_evernic_button.click()
-        elif self.mark_zeorin_button.isChecked():
-            current_sid = -5 # Zeorin ID
-            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
-                self.mark_zeorin_button.click()
 
         # Calibration Logic
         # Gather Active Standards per Plate
@@ -1759,12 +1733,6 @@ class MainWindow(QMainWindow):
              for idx, vals in aggregated[-4].items():
                  if vals and idx in self.evernic_standards:
                      active_standards[idx].append((vals[0], self.evernic_standards[idx]))
-
-        # Check Zeorin (-5)
-        if -5 in aggregated:
-             for idx, vals in aggregated[-5].items():
-                 if vals and idx in self.zeorin_standards:
-                     active_standards[idx].append((vals[0], self.zeorin_standards[idx]))
 
         # Check additional reference substances (sid > 0 with is_reference flag)
         for sid, sdata in self.samples.items():
@@ -1804,8 +1772,6 @@ class MainWindow(QMainWindow):
                         std_name = "Lecanoric Acid"
                     elif std in self.evernic_standards.values():
                         std_name = "Evernic Acid"
-                    elif std in self.zeorin_standards.values():
-                        std_name = "Zeorin"
                     else:
                         # Check if it's a user-defined reference substance
                         for sid, sdata in self.samples.items():
@@ -1909,8 +1875,6 @@ class MainWindow(QMainWindow):
                                             std_name = "Lecanoric Acid"
                                         elif std_val in self.evernic_standards.values():
                                             std_name = "Evernic Acid"
-                                        elif std_val in self.zeorin_standards.values():
-                                            std_name = "Zeorin"
                                         else:
                                             # Check user-defined reference substances
                                             std_name = "Unknown"
@@ -1933,8 +1897,6 @@ class MainWindow(QMainWindow):
                                             std_name = "Lecanoric Acid"
                                         elif std_val in self.evernic_standards.values():
                                             std_name = "Evernic Acid"
-                                        elif std_val in self.zeorin_standards.values():
-                                            std_name = "Zeorin"
                                         else:
                                             std_name = "Unknown"
                                             for ref_sid, sdata in self.samples.items():
@@ -1990,8 +1952,6 @@ class MainWindow(QMainWindow):
                                     std_name = "Lecanoric Acid"
                                 elif std_rf in self.evernic_standards.values():
                                     std_name = "Evernic Acid"
-                                elif std_rf in self.zeorin_standards.values():
-                                    std_name = "Zeorin"
                                 else:
                                     for ref_sid, sdata in self.samples.items():
                                         if sdata.get('is_reference', False) and sdata.get('reference_rf'):
@@ -2181,7 +2141,6 @@ class MainWindow(QMainWindow):
             (-2, self.mark_rhizocarpic_button, "orange"),
             (-3, self.mark_lecanoric_button, "limegreen"),
             (-4, self.mark_evernic_button, "magenta"),
-            (-5, self.mark_zeorin_button, "purple"),
         ]
         
         for sid, button, color in ref_button_config:
@@ -2327,8 +2286,6 @@ class MainWindow(QMainWindow):
                     color = QColor("limegreen")      # Lecanoric Acid reference
                 elif sid == -4:
                     color = QColor("magenta")   # Evernic Acid reference
-                elif sid == -5:
-                    color = QColor("purple")    # Zeorin reference
                 else:
                     color = self.colors[(sid - 1) % len(self.colors)]
                 self.samples[sid] = {
@@ -2439,13 +2396,11 @@ class MainWindow(QMainWindow):
             self.mark_lecanoric_button.click()
         if self.mark_evernic_button.isChecked():
             self.mark_evernic_button.click()
-        if self.mark_zeorin_button.isChecked():
-            self.mark_zeorin_button.click()
-        
+
         # Reset reference button colors
         for button in [self.mark_atranorin_button, self.mark_norstictic_button,
                        self.mark_rhizocarpic_button, self.mark_lecanoric_button,
-                       self.mark_evernic_button, self.mark_zeorin_button]:
+                       self.mark_evernic_button]:
             button.setStyleSheet("")
 
         # Close and clear all open characteristics windows
