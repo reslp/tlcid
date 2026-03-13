@@ -2459,7 +2459,7 @@ class MainWindow(QMainWindow):
         db.setDatabaseName(self.db_path)
             
         if db.open():
-            # Populate Genus Cache
+            # Populate Genus Cache - try Lichens table first (new format)
             gen_query = QSqlQuery(db)
             if gen_query.exec("SELECT DISTINCT Genus, Substance FROM Lichens"):
                 while gen_query.next():
@@ -2468,6 +2468,10 @@ class MainWindow(QMainWindow):
                     if g not in self.genus_to_substances:
                         self.genus_to_substances[g] = set()
                     self.genus_to_substances[g].add(s.lower())
+                print(f"DEBUG: Loaded {len(self.genus_to_substances)} genera with genus-to-substance mappings from Lichens table")
+            else:
+                # If Lichens table query failed or returned no results, warn about missing genus support
+                print(f"DEBUG: Warning - Lichens table not available or empty. Genus filtering will not work.")
 
             tables = ["Substances", "SubstancesBackup"]
             for table in tables:

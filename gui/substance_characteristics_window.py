@@ -135,20 +135,18 @@ class SubstanceCharacteristicsWindow(QDialog):
 
     def load_genera(self, current_genus):
         query = QSqlQuery(self.db)
-        # Extract unique genera from Lichens column
+        # Extract unique genera from Lichens table (new format)
         genus_set = set()
-        if query.exec("SELECT DISTINCT Lichens FROM Substances"):
-             while query.next():
-                 lichens_val = query.value(0)
-                 if lichens_val:
-                     parts = lichens_val.strip().split()
-                     if parts:
-                         genus_set.add(parts[0])
-        
+        if query.exec("SELECT DISTINCT Genus FROM Lichens ORDER BY Genus"):
+            while query.next():
+                genus = query.value(0)
+                if genus:
+                    genus_set.add(genus)
+
         sorted_genera = sorted(list(genus_set))
         for genus in sorted_genera:
             self.combo_genus.addItem(genus, genus)
-            
+
         if current_genus:
             index = self.combo_genus.findData(current_genus)
             if index >= 0:
