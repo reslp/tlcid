@@ -774,33 +774,40 @@ class MainWindow(QMainWindow):
         # Update the sample data
         self.samples[sid]['is_reference'] = (state == 2)  # Qt.CheckState.Checked == 2
 
-        # If checked, load the reference Rf values from database
-        if self.samples[sid]['is_reference']:
-            assigned_name = self.samples[sid].get('assigned_name')
-            if not assigned_name:
-                # Use first predicted match if no assigned name
-                matches = self.samples[sid].get('last_matches', [])
-                if matches:
-                    assigned_name = matches[0][1]  # Extract name from (score, name) tuple
+        # Predefined reference standards can use hardcoded Rf values directly
+        predefined_reference_rf = {
+            0: [self.atranorin_standards.get(0), self.atranorin_standards.get(1), self.atranorin_standards.get(2)],
+            -1: [self.norstictic_standards.get(0), self.norstictic_standards.get(1), self.norstictic_standards.get(2)],
+            -2: [self.rhizocarpic_standards.get(0), self.rhizocarpic_standards.get(1), self.rhizocarpic_standards.get(2)],
+            -3: [self.lecanoric_standards.get(0), self.lecanoric_standards.get(1), self.lecanoric_standards.get(2)],
+            -4: [self.evernic_standards.get(0), self.evernic_standards.get(1), self.evernic_standards.get(2)],
+        }
 
-            if assigned_name:
-                ref_rf = self.get_substance_rf_from_db(assigned_name)
-                if ref_rf:
-                    self.samples[sid]['reference_rf'] = ref_rf
-                    print(f"DEBUG: Substance {sid} marked as reference with name '{assigned_name}' and Rf: {ref_rf}")
-                else:
-                    print(f"DEBUG: Could not find Rf values for '{assigned_name}' in database")
-                    self.samples[sid]['reference_rf'] = None
+        # If checked, load reference Rf values
+        if self.samples[sid]['is_reference']:
+            if sid in predefined_reference_rf:
+                self.samples[sid]['reference_rf'] = predefined_reference_rf[sid]
+                print(f"DEBUG: Predefined reference {sid} marked with Rf: {predefined_reference_rf[sid]}")
             else:
-                print(f"DEBUG: Substance {sid} has no assigned name, cannot be reference")
-                self.samples[sid]['is_reference'] = False
-                # Uncheck the checkbox
-                checkbox = self.results_table.cellWidget(row, 6)
-                if checkbox:
-                    checkbox.blockSignals(True)
-                    checkbox.setChecked(False)
-                    checkbox.blockSignals(False)
-                self.samples[sid]['reference_rf'] = None
+                assigned_name = self.samples[sid].get('assigned_name')
+                if not assigned_name:
+                    # Use first predicted match if no assigned name
+                    matches = self.samples[sid].get('last_matches', [])
+                    if matches:
+                        assigned_name = matches[0][1]  # Extract name from (score, name) tuple
+
+                if assigned_name:
+                    ref_rf = self.get_substance_rf_from_db(assigned_name)
+                    if ref_rf:
+                        self.samples[sid]['reference_rf'] = ref_rf
+                        print(f"DEBUG: Substance {sid} marked as reference with name '{assigned_name}' and Rf: {ref_rf}")
+                    else:
+                        print(f"DEBUG: Could not find Rf values for '{assigned_name}' in database")
+                        self.samples[sid]['reference_rf'] = None
+                else:
+                    print(f"DEBUG: Substance {sid} has no assigned name, cannot be reference")
+                    self.samples[sid]['is_reference'] = False
+                    self.samples[sid]['reference_rf'] = None
         else:
             self.samples[sid]['reference_rf'] = None
             print(f"DEBUG: Substance {sid} unmarked as reference")
@@ -1704,32 +1711,42 @@ class MainWindow(QMainWindow):
         # Gather Active Standards per Plate
         active_standards = {0: [], 1: [], 2: []}
 
-        # Check Atranorin (0)
-        if 0 in aggregated:
+        # Default behavior for predefined references: when newly marked, enable as references by default
+        predefined_reference_rf = {
+            0: [self.atranorin_standards.get(0), self.atranorin_standards.get(1), self.atranorin_standards.get(2)],
+            -1: [self.norstictic_standards.get(0), self.norstictic_standards.get(1), self.norstictic_standards.get(2)],
+            -2: [self.rhizocarpic_standards.get(0), self.rhizocarpic_standards.get(1), self.rhizocarpic_standards.get(2)],
+            -3: [self.lecanoric_standards.get(0), self.lecanoric_standards.get(1), self.lecanoric_standards.get(2)],
+            -4: [self.evernic_standards.get(0), self.evernic_standards.get(1), self.evernic_standards.get(2)],
+        }
+        for ref_sid, ref_rf in predefined_reference_rf.items():
+            if ref_sid in aggregated and ref_sid in self.samples:
+                if 'is_reference' not in self.samples[ref_sid]:
+                    self.samples[ref_sid]['is_reference'] = True
+                    self.samples[ref_sid]['reference_rf'] = ref_rf
+
+        # Check predefined references only when enabled via checkbox (is_reference=True)
+        if 0 in aggregated and self.samples.get(0, {}).get('is_reference', False):
              for idx, vals in aggregated[0].items():
                  if vals and idx in self.atranorin_standards:
                      active_standards[idx].append((vals[0], self.atranorin_standards[idx]))
 
-        # Check Norstictic (-1)
-        if -1 in aggregated:
+        if -1 in aggregated and self.samples.get(-1, {}).get('is_reference', False):
              for idx, vals in aggregated[-1].items():
                  if vals and idx in self.norstictic_standards:
                      active_standards[idx].append((vals[0], self.norstictic_standards[idx]))
 
-        # Check Rhizocarpic Acid (-2)
-        if -2 in aggregated:
+        if -2 in aggregated and self.samples.get(-2, {}).get('is_reference', False):
              for idx, vals in aggregated[-2].items():
                  if vals and idx in self.rhizocarpic_standards:
                      active_standards[idx].append((vals[0], self.rhizocarpic_standards[idx]))
 
-        # Check Lecanoric Acid (-3)
-        if -3 in aggregated:
+        if -3 in aggregated and self.samples.get(-3, {}).get('is_reference', False):
              for idx, vals in aggregated[-3].items():
                  if vals and idx in self.lecanoric_standards:
                      active_standards[idx].append((vals[0], self.lecanoric_standards[idx]))
 
-        # Check Evernic Acid (-4)
-        if -4 in aggregated:
+        if -4 in aggregated and self.samples.get(-4, {}).get('is_reference', False):
              for idx, vals in aggregated[-4].items():
                  if vals and idx in self.evernic_standards:
                      active_standards[idx].append((vals[0], self.evernic_standards[idx]))
@@ -2073,23 +2090,33 @@ class MainWindow(QMainWindow):
             self.results_table.setCellWidget(current_row, 5, pred_label)
 
             # 4. Reference Checkbox (Column 6)
-            # Only allow marking as reference for positive substance IDs (sid > 0)
-            if sid > 0:
+            # Show checkboxes for regular substances and predefined reference substances
+            reference_sids = {0, -1, -2, -3, -4}
+            if sid > 0 or sid in reference_sids:
                 ref_container = QWidget2()
                 ref_layout = QHBoxLayout(ref_container)
                 ref_layout.setContentsMargins(0, 0, 0, 0)
                 ref_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
                 ref_checkbox = QCheckBox()
-                ref_checkbox.setChecked(self.samples[sid].get('is_reference', False))
-                # Store row number in checkbox for later use
-                ref_checkbox.setProperty('row', current_row)
-                ref_checkbox.stateChanged.connect(lambda state, sid=sid, row=current_row: self.handle_reference_checkbox(state, sid))
+
+                if sid in reference_sids:
+                    # For predefined references, allow toggling only when marked on plates
+                    is_marked_on_plates = sid in aggregated and len(aggregated[sid]) > 0
+                    if not is_marked_on_plates:
+                        self.samples[sid]['is_reference'] = False
+                        self.samples[sid]['reference_rf'] = None
+                    ref_checkbox.setChecked(self.samples[sid].get('is_reference', False))
+                    ref_checkbox.setEnabled(is_marked_on_plates)
+                else:
+                    # Regular substances
+                    ref_checkbox.setChecked(self.samples[sid].get('is_reference', False))
+
+                ref_checkbox.stateChanged.connect(lambda state, sid=sid: self.handle_reference_checkbox(state, sid))
 
                 ref_layout.addWidget(ref_checkbox)
                 self.results_table.setCellWidget(current_row, 6, ref_container)
             else:
-                # Reference standards (Atranorin, Norstictic) don't need checkboxes
                 empty_label = QLabel()
                 empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.results_table.setCellWidget(current_row, 6, empty_label)
