@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QLabel, QPushButton, QFileDialog, QSizePolicy, QComboBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QColorDialog,
-                             QMessageBox, QDoubleSpinBox, QDialog, QCheckBox, QWidget as QWidget2)
+                             QMessageBox, QDoubleSpinBox, QDialog, QCheckBox, QMenu, QWidget as QWidget2)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
@@ -1050,6 +1050,74 @@ class MainWindow(QMainWindow):
         window = PredictionResultsWindow(substance_name, substance_id, matches, plate_data, self)
         window.exec()
 
+    def assign_predicted_name_to_sample(self, sid, name):
+        """Assign a predicted substance name to a sample (same logic as characteristics window assignment)."""
+        if sid not in self.samples:
+            return
+
+        self.samples[sid]['assigned_name'] = name
+
+        # If characteristics window is open, keep dropdown in sync
+        if sid in self.char_windows and self.char_windows[sid] and self.char_windows[sid].isVisible():
+            win = self.char_windows[sid]
+            win.combo_assigned.blockSignals(True)
+            win.combo_assigned.setEditText(name)
+            win.combo_assigned.blockSignals(False)
+
+        self.update_results_display()
+
+    def set_sample_show_on_plate(self, sid, show_on_plate):
+        """Toggle whether the sample name is displayed on the plate."""
+        if sid not in self.samples:
+            return
+
+        self.samples[sid]['show_on_plate'] = bool(show_on_plate)
+
+        # Keep characteristics window checkbox in sync when open
+        if sid in self.char_windows and self.char_windows[sid] and self.char_windows[sid].isVisible():
+            win = self.char_windows[sid]
+            win.check_show_name.blockSignals(True)
+            win.check_show_name.setChecked(bool(show_on_plate))
+            win.check_show_name.blockSignals(False)
+
+        self.update_results_display()
+
+    def show_prediction_context_menu(self, sid, label_widget, pos):
+        """Show context menu for the exact predicted substance currently hovered/clicked."""
+        if sid not in self.samples:
+            return
+
+        hovered_link = None
+        if hasattr(self, '_prediction_hover_link_by_sid'):
+            hovered_link = self._prediction_hover_link_by_sid.get(sid)
+
+        menu = QMenu(self)
+
+        clicked_name = None
+        # Only offer assignment for the exact hovered prediction link
+        if hovered_link and hovered_link.startswith("substance:"):
+            clicked_name = unquote(hovered_link.split(":", 1)[1])
+            assign_action = menu.addAction(f"Assign substance name: {clicked_name}")
+            assign_action.triggered.connect(
+                lambda checked=False, s=sid, n=clicked_name: self.assign_predicted_name_to_sample(s, n)
+            )
+        else:
+            disabled = menu.addAction("Assign substance name")
+            disabled.setEnabled(False)
+
+        # Display name on plate (same behavior as characteristics window checkbox)
+        display_action = menu.addAction("Display name on plate")
+        display_action.setCheckable(True)
+        display_action.setChecked(bool(self.samples.get(sid, {}).get('show_on_plate', False)))
+        display_action.triggered.connect(
+            lambda checked=False, s=sid, n=clicked_name: (
+                self.assign_predicted_name_to_sample(s, n) if (checked and n) else None,
+                self.set_sample_show_on_plate(s, checked)
+            )
+        )
+
+        menu.exec(label_widget.mapToGlobal(pos))
+
     def open_characteristics_window(self, sid):
         if sid not in self.samples:
             return
@@ -2083,6 +2151,15 @@ class MainWindow(QMainWindow):
                  pred_label.setText(match_str)
                  pred_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
                  pred_label.linkActivated.connect(self.handle_link_click)
+                 if not hasattr(self, '_prediction_hover_link_by_sid'):
+                     self._prediction_hover_link_by_sid = {}
+                 pred_label.linkHovered.connect(
+                     lambda link, sid=sid: self._prediction_hover_link_by_sid.__setitem__(sid, link)
+                 )
+                 pred_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                 pred_label.customContextMenuRequested.connect(
+                     lambda pos, sid=sid, w=pred_label: self.show_prediction_context_menu(sid, w, pos)
+                 )
             else:
                 pred_label.setText("-")
                 
