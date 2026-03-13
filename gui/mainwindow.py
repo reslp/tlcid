@@ -1048,6 +1048,11 @@ class MainWindow(QMainWindow):
 
         # Create and show the prediction results window
         window = PredictionResultsWindow(substance_name, substance_id, matches, plate_data, self)
+
+        # Position window slightly to the right of the main window
+        parent_pos = self.pos()
+        window.move(parent_pos.x() + 140, parent_pos.y() + 40)
+
         window.exec()
 
     def assign_predicted_name_to_sample(self, sid, name):

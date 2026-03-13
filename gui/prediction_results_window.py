@@ -1,8 +1,9 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QPushButton, QLabel, QHBoxLayout)
+                             QHeaderView, QPushButton, QLabel, QHBoxLayout, QWidget)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtSql import QSqlDatabase, QSqlQuery
+
 
 class PredictionResultsWindow(QDialog):
     """Dialog window showing all prediction results for a substance in a table format."""
@@ -16,7 +17,7 @@ class PredictionResultsWindow(QDialog):
         self.db_rf_values = {}  # Cache for database Rf values
 
         self.setWindowTitle(f"All Prediction Results - {substance_name}")
-        self.resize(900, 600)
+        self.resize(300, 600)
 
         self.setup_ui()
 
@@ -84,9 +85,17 @@ class PredictionResultsWindow(QDialog):
         layout = QVBoxLayout()
         self.setLayout(layout)
 
-        # Header with substance name and match count
+        # Header with substance name, observed plate Rf values, and match count
         header_layout = QHBoxLayout()
-        header_label = QLabel(f"<b>Prediction Results for {self.substance_name}</b>")
+
+        obs_a = self.format_rf_value(self.plate_data.get(0)) if isinstance(self.plate_data, dict) else "-"
+        obs_b = self.format_rf_value(self.plate_data.get(1)) if isinstance(self.plate_data, dict) else "-"
+        obs_c = self.format_rf_value(self.plate_data.get(2)) if isinstance(self.plate_data, dict) else "-"
+
+        header_label = QLabel(
+            f"<b>Prediction Results for {self.substance_name}</b>"
+            f"  <span style='color: gray;'>| Spot Rf: A={obs_a}, B'={obs_b}, C={obs_c}</span>"
+        )
         header_label.setStyleSheet("font-size: 14px;")
         header_layout.addWidget(header_label)
         header_layout.addStretch()
@@ -97,27 +106,46 @@ class PredictionResultsWindow(QDialog):
 
         layout.addLayout(header_layout)
 
-        # Results table
+        # Two-column content area: prediction table (left) + substance details (right)
+        content_layout = QHBoxLayout()
+
+        # Results table (left)
         self.table = QTableWidget()
         self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Substance Name", "Plate A (Rf)", "Plate B' (Rf)", "Plate C (Rf)", "Match Score"])
+        self.table.setHorizontalHeaderLabels(["Name", "Rf A", "Rf B'", "Rf C", "Score"])
 
-        # Configure table appearance
+        # Configure table appearance (resizable columns)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Substance name
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Plate A
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Plate B'
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Plate C
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Score
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)  # Substance name
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)  # Plate A
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)  # Plate B'
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)  # Plate C
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)  # Score
+        self.table.setColumnWidth(0, 220)
+        self.table.setColumnWidth(1, 45)
+        self.table.setColumnWidth(2, 45)
+        self.table.setColumnWidth(3, 45)
+        self.table.setColumnWidth(4, 80)
 
         self.table.setAlternatingRowColors(True)
         self.table.setSortingEnabled(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.cellClicked.connect(self.on_table_cell_clicked)
 
         # Populate table
         self.populate_table()
 
-        layout.addWidget(self.table)
+        # Detail panel (left), shown after first click
+        self.detail_panel = QWidget()
+        self.detail_panel_layout = QVBoxLayout(self.detail_panel)
+        self.detail_panel_layout.setContentsMargins(0, 0, 0, 0)
+        self.detail_panel.setMinimumWidth(300)
+        self.detail_panel.hide()
+        content_layout.addWidget(self.detail_panel, stretch=4)
+
+        content_layout.addWidget(self.table, stretch=3)
+
+        layout.addLayout(content_layout)
 
         # Close button
         button_layout = QHBoxLayout()
@@ -129,6 +157,48 @@ class PredictionResultsWindow(QDialog):
 
         layout.addLayout(button_layout)
 
+    def on_table_cell_clicked(self, row, column):
+        """Show substance detail in right panel when clicking on the substance name cell."""
+        if column != 0:
+            return
+
+        item = self.table.item(row, 0)
+        if not item:
+            return
+
+        name = item.data(Qt.ItemDataRole.UserRole) or item.text()
+        if not name:
+            return
+
+        from gui.substance_detail_window import SubstanceDetailWindow
+
+        db = QSqlDatabase.database()
+        if not db.isOpen() and self.parent() is not None and hasattr(self.parent(), "_ensure_default_db_connection"):
+            db = self.parent()._ensure_default_db_connection()
+
+        if not db.isOpen():
+            return
+
+        # Clear previous detail widget
+        while self.detail_panel_layout.count():
+            child = self.detail_panel_layout.takeAt(0)
+            w = child.widget()
+            if w is not None:
+                w.deleteLater()
+
+        # Embed detail dialog as a widget in the right column
+        detail = SubstanceDetailWindow(str(name), db)
+        detail.setWindowFlags(Qt.WindowType.Widget)
+        detail.setParent(self.detail_panel)
+        detail.setWindowTitle(f"Substance Details: {name}")
+        self.detail_panel_layout.addWidget(detail)
+        detail.show()
+
+        # Reveal panel + expand window width once
+        if not self.detail_panel.isVisible():
+            self.detail_panel.show()
+            self.resize(max(self.width(), 1150), self.height())
+
     def populate_table(self):
         """Populate the table with prediction results."""
         self.table.setRowCount(len(self.matches))
@@ -137,6 +207,8 @@ class PredictionResultsWindow(QDialog):
             # Substance name
             name_item = QTableWidgetItem(name)
             name_item.setData(Qt.ItemDataRole.UserRole, name)  # Store name for sorting
+            name_item.setForeground(QColor(0, 102, 204))  # clickable-link style
+            name_item.setToolTip("Click to open substance details")
             self.table.setItem(row, 0, name_item)
 
             # Get Rf values from the database for this predicted substance
