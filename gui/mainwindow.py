@@ -1123,6 +1123,57 @@ class MainWindow(QMainWindow):
 
         menu.exec(label_widget.mapToGlobal(pos))
 
+    def show_substance_context_menu(self, sid, label_widget, pos):
+        """Right-click context menu for entries in the Substance column."""
+        if sid not in self.samples:
+            return
+
+        menu = QMenu(self)
+        remove_action = menu.addAction("Remove substance")
+        remove_action.triggered.connect(lambda checked=False, s=sid: self.remove_substance(s))
+        menu.exec(label_widget.mapToGlobal(pos))
+
+    def remove_substance(self, sid):
+        """Remove a substance from result state and from all plate spots."""
+        if sid not in self.samples:
+            return
+
+        # If this substance is currently in an active marking mode, stop that mode first.
+        if sid > 0 and self.mark_substance_button.isChecked() and sid == (self.next_sample_id - 1):
+            self.mark_substance_button.click()
+        elif sid == 0 and self.mark_atranorin_button.isChecked():
+            self.mark_atranorin_button.click()
+        elif sid == -1 and self.mark_norstictic_button.isChecked():
+            self.mark_norstictic_button.click()
+        elif sid == -2 and self.mark_rhizocarpic_button.isChecked():
+            self.mark_rhizocarpic_button.click()
+        elif sid == -3 and self.mark_lecanoric_button.isChecked():
+            self.mark_lecanoric_button.click()
+        elif sid == -4 and self.mark_evernic_button.isChecked():
+            self.mark_evernic_button.click()
+
+        # Remove all matching spots from all plates.
+        for slot in self.slots:
+            slot.image_label.spots = [spot for spot in slot.image_label.spots if spot.get('sample_id') != sid]
+            slot.image_label.update()
+
+        # Close characteristics window, if open.
+        if sid in self.char_windows:
+            try:
+                if self.char_windows[sid] is not None:
+                    self.char_windows[sid].close()
+                    self.char_windows[sid].deleteLater()
+            finally:
+                self.char_windows.pop(sid, None)
+
+        # Remove sample state from memory.
+        self.samples.pop(sid, None)
+
+        if hasattr(self, '_prediction_hover_link_by_sid'):
+            self._prediction_hover_link_by_sid.pop(sid, None)
+
+        self.update_results_display()
+
     def open_characteristics_window(self, sid):
         if sid not in self.samples:
             return
@@ -1914,6 +1965,10 @@ class MainWindow(QMainWindow):
             name_label.setText(f"<a href='edit_sample:{sid}' style='color:steelblue; text-decoration:none;'><b>{name_text}</b></a>")
             name_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
             name_label.linkActivated.connect(self.handle_link_click)
+            name_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            name_label.customContextMenuRequested.connect(
+                lambda pos, sid=sid, w=name_label: self.show_substance_context_menu(sid, w, pos)
+            )
             name_label.setContentsMargins(5, 0, 5, 0)
             self.results_table.setCellWidget(current_row, 1, name_label)
 
