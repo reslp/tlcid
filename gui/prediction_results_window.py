@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QPushButton, QLabel, QHBoxLayout, QWidget)
+                             QHeaderView, QPushButton, QLabel, QHBoxLayout, QWidget, QMenu)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtSql import QSqlDatabase, QSqlQuery
@@ -131,6 +131,8 @@ class PredictionResultsWindow(QDialog):
         self.table.setSortingEnabled(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.cellClicked.connect(self.on_table_cell_clicked)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_prediction_context_menu)
 
         # Populate table
         self.populate_table()
@@ -198,6 +200,57 @@ class PredictionResultsWindow(QDialog):
         if not self.detail_panel.isVisible():
             self.detail_panel.show()
             self.resize(max(self.width(), 1150), self.height())
+
+    def _name_from_row(self, row):
+        """Return substance name for a table row (None if unavailable)."""
+        if row < 0:
+            return None
+        item = self.table.item(row, 0)
+        if not item:
+            return None
+        return item.data(Qt.ItemDataRole.UserRole) or item.text()
+
+    def show_prediction_context_menu(self, pos):
+        """Right-click context menu for prediction entries (matches main results behavior)."""
+        parent = self.parent()
+        if parent is None or not hasattr(parent, "assign_predicted_name_to_sample"):
+            return
+
+        row = self.table.rowAt(pos.y())
+        clicked_name = self._name_from_row(row)
+
+        menu = QMenu(self)
+
+        if clicked_name:
+            assign_action = menu.addAction(f"Assign substance name: {clicked_name}")
+            assign_action.triggered.connect(
+                lambda checked=False, s=self.substance_id, n=clicked_name: parent.assign_predicted_name_to_sample(s, n)
+            )
+        else:
+            disabled = menu.addAction("Assign substance name")
+            disabled.setEnabled(False)
+
+        display_action = menu.addAction("Display name on plate")
+        display_action.setCheckable(True)
+
+        current_show = False
+        if hasattr(parent, "samples"):
+            current_show = bool(parent.samples.get(self.substance_id, {}).get("show_on_plate", False))
+        display_action.setChecked(current_show)
+
+        if clicked_name:
+            display_action.triggered.connect(
+                lambda checked=False, s=self.substance_id, n=clicked_name: (
+                    parent.assign_predicted_name_to_sample(s, n) if checked else None,
+                    parent.set_sample_show_on_plate(s, checked)
+                )
+            )
+        else:
+            display_action.triggered.connect(
+                lambda checked=False, s=self.substance_id: parent.set_sample_show_on_plate(s, checked)
+            )
+
+        menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def populate_table(self):
         """Populate the table with prediction results."""
