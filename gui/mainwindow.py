@@ -291,13 +291,13 @@ class ImageSlot(QWidget):
         title_layout.addWidget(self.title_label)
 
         # Range SpinBox (per-plate)
-        self.relative_rf_display = False
+        self.relative_rf_display = True
         self.range_spin = QDoubleSpinBox()
         self.range_spin.setPrefix("±")
         self.range_spin.setToolTip(f"Range tolerance for plate {title}")
         self.range_spin.setMaximumWidth(80)  # Reduced width to 1/3 of previous (120/3)
         self.range_spin.valueChanged.connect(self._on_range_changed)
-        self.set_relative_rf_display(False)
+        self.set_relative_rf_display(True)
         self.set_range(0.05)
         title_layout.addWidget(self.range_spin)
 
@@ -542,7 +542,7 @@ class MainWindow(QMainWindow):
         # Detection Settings
         self.detection_method = "Range"
         self.detection_range = 0.05  # Global default (used as initial value for plates)
-        self.relative_rf_display = False
+        self.relative_rf_display = True
 
         # Per-plate range settings: {plate_index: range_value}
         self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
@@ -1585,13 +1585,18 @@ class MainWindow(QMainWindow):
             return f"{value * 100:.0f}"
         return f"{value:.2f}"
 
-    def update_detection_settings(self, method, range_val, relative_rf=False):
+    def update_detection_settings(self, method, range_val, relative_rf=True):
         self.detection_method = method
         self.detection_range = range_val
         self.relative_rf_display = relative_rf
         for slot in self.slots:
             slot.set_relative_rf_display(relative_rf)
         self.update_detection_status_label()
+
+        # Keep settings window controls synchronized when open
+        if hasattr(self, 'settings_window') and self.settings_window is not None:
+            self.settings_window.set_current_settings(method, range_val, relative_rf)
+
         self.update_results_display()
 
     def on_main_range_changed(self, val):
@@ -2373,6 +2378,7 @@ class MainWindow(QMainWindow):
             "version": 2,
             "detection_method": self.detection_method,
             "detection_range": self.detection_range,
+            "relative_rf_display": self.relative_rf_display,
             "plate_ranges": self.plate_ranges,
             "calibration_mode": self.calibration_mode,
             "samples": {},
@@ -2441,6 +2447,8 @@ class MainWindow(QMainWindow):
                  self.detection_method = data["detection_method"]
             if "detection_range" in data:
                  self.detection_range = float(data["detection_range"])
+            if "relative_rf_display" in data:
+                 self.relative_rf_display = bool(data["relative_rf_display"])
             if "plate_ranges" in data:
                  self.plate_ranges = {int(k): v for k, v in data["plate_ranges"].items()}
             if "calibration_mode" in data:
@@ -2455,8 +2463,9 @@ class MainWindow(QMainWindow):
             # Update UI for detection settings
             self.update_detection_status_label()
 
-            # Update per-plate range spinboxes
+            # Apply relative/absolute display mode and per-plate ranges
             for i, slot in enumerate(self.slots):
+                slot.set_relative_rf_display(self.relative_rf_display)
                 slot.set_range(self.plate_ranges.get(i, 0.05))
             
             # Block signals on all image labels during loading to prevent

@@ -41,8 +41,9 @@ class SettingsWindow(QWidget):
         self.range_spin.valueChanged.connect(self.on_value_changed)
         layout.addWidget(self.range_spin)
 
-        # Relative Rf display toggle
+        # Relative Rf display toggle (default: enabled)
         self.relative_rf_checkbox = QCheckBox("Toggle absolute Rf")
+        self.relative_rf_checkbox.setChecked(True)
         self.relative_rf_checkbox.stateChanged.connect(self.on_value_changed)
         layout.addWidget(self.relative_rf_checkbox)
 
@@ -71,9 +72,22 @@ class SettingsWindow(QWidget):
         relative_rf = self.relative_rf_checkbox.isChecked()
         self.settingsChanged.emit(method, range_val, relative_rf)
 
-    def set_current_settings(self, method, range_val, relative_rf=False):
+    def set_current_settings(self, method, range_val, relative_rf=True):
+        self.method_combo.blockSignals(True)
+        self.range_spin.blockSignals(True)
+        self.relative_rf_checkbox.blockSignals(True)
+
         index = self.method_combo.findText(method)
         if index >= 0:
             self.method_combo.setCurrentIndex(index)
         self.range_spin.setValue(range_val)
         self.relative_rf_checkbox.setChecked(relative_rf)
+
+        self.method_combo.blockSignals(False)
+        self.range_spin.blockSignals(False)
+        self.relative_rf_checkbox.blockSignals(False)
+
+        # Keep range visibility in sync with method even when signals are blocked.
+        is_range = self.method_combo.currentText() == "Range"
+        self.range_label.setVisible(is_range)
+        self.range_spin.setVisible(is_range)
