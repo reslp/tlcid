@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QMessageBox, QDoubleSpinBox, QDialog, QCheckBox, QMenu, QWidget as QWidget2)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QCloseEvent
 from urllib.parse import quote, unquote
 import html
 
@@ -2338,7 +2338,7 @@ class MainWindow(QMainWindow):
             self, "Save Analysis", "", "JSON Files (*.json)"
         )
         if not file_name:
-            return
+            return False
             
         data = {
             "version": 2,
@@ -2383,8 +2383,11 @@ class MainWindow(QMainWindow):
         try:
             with open(file_name, 'w') as f:
                 json.dump(data, f, indent=4)
+            return True
         except Exception as e:
             print(f"Error saving file: {e}")
+            QMessageBox.warning(self, "Save Error", f"Could not save analysis:\n{e}")
+            return False
 
     def load_analysis(self):
         import json
@@ -2530,6 +2533,82 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             print(f"Error loading file: {e}")
+
+    def _has_analysis_data(self):
+        """Return True if plates are loaded and/or spots/substances exist."""
+        if self.samples:
+            return True
+
+        for slot in self.slots:
+            if slot.image_path or slot.image_label._original_pixmap is not None:
+                return True
+            if slot.image_label.spots:
+                return True
+
+        return False
+
+    def _close_child_windows(self):
+        """Close all known child/top-level windows opened from the main window."""
+        for sid, win in list(self.char_windows.items()):
+            try:
+                if win is not None:
+                    win.close()
+            except RuntimeError:
+                pass
+        self.char_windows.clear()
+
+        for name, win in list(self.detail_windows.items()):
+            try:
+                if win is not None:
+                    win.close()
+            except RuntimeError:
+                pass
+        self.detail_windows.clear()
+
+        if hasattr(self, 'table_windows'):
+            for _, win in list(self.table_windows.items()):
+                try:
+                    if win is not None:
+                        win.close()
+                except RuntimeError:
+                    pass
+            self.table_windows = {}
+
+        if hasattr(self, 'settings_window') and self.settings_window is not None:
+            try:
+                self.settings_window.close()
+            except RuntimeError:
+                pass
+            self.settings_window = None
+
+        if hasattr(self, 'species_window') and self.species_window is not None:
+            try:
+                self.species_window.close()
+            except RuntimeError:
+                pass
+            self.species_window = None
+
+    def closeEvent(self, event: QCloseEvent):
+        if self._has_analysis_data():
+            choice = QMessageBox.question(
+                self,
+                "Save Analysis?",
+                "Current analysis has loaded plates and/or marked substances. Save before closing?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+
+            if choice == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+
+            if choice == QMessageBox.StandardButton.Save:
+                if not self.save_analysis():
+                    event.ignore()
+                    return
+
+        self._close_child_windows()
+        super().closeEvent(event)
 
     def new_analysis(self):
         # Reset Global State
