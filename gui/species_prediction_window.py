@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                              QListWidget, QListWidgetItem, QPushButton, QTextEdit)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap, QIcon
+from PyQt6.QtGui import QPixmap, QIcon, QTextCharFormat, QColor
 from PyQt6.QtSql import QSqlQuery
 
 class SpeciesPredictionWindow(QDialog):
@@ -59,36 +59,80 @@ class SpeciesPredictionWindow(QDialog):
             item = self.substance_list.item(i)
             if item.checkState() == Qt.CheckState.Checked:
                 selected_names.add(item.data(Qt.ItemDataRole.UserRole))
-        
+
         selected = sorted(list(selected_names))
-        
+
         if not selected:
             self.results_area.setText("Please select at least one substance.")
             return
-            
+
         # SQL Logic: Find lichens that contain ALL selected substances
         sub_placeholders = ",".join(["?" for _ in selected])
         query_str = f"""
-            SELECT Lichen FROM Lichens 
+            SELECT Lichen FROM Lichens
             WHERE Substance IN ({sub_placeholders})
-            GROUP BY Lichen 
+            GROUP BY Lichen
             HAVING COUNT(DISTINCT Substance) = {len(selected)}
             ORDER BY Lichen
         """
-        
+
         query = QSqlQuery(self.db)
         query.prepare(query_str)
         for s in selected:
             query.addBindValue(s)
-            
-        results = []
+
+        matching_lichens = []
         if query.exec():
             while query.next():
-                results.append(query.value(0))
-        
-        if results:
-            text = f"Found {len(results)} species containing: {', '.join(selected)}\n\n"
-            text += "\n".join(results)
-            self.results_area.setText(text)
-        else:
+                matching_lichens.append(query.value(0))
+
+        if not matching_lichens:
             self.results_area.setText(f"No species found in the database containing all: {', '.join(selected)}")
+            return
+
+        # Fetch additional substances each matching lichen contains.
+        # We keep selected substances out and display only the extras.
+        selected_set = set(selected)
+        lichen_placeholders = ",".join(["?" for _ in matching_lichens])
+        extras_query_str = f"""
+            SELECT Lichen, Substance
+            FROM Lichens
+            WHERE Lichen IN ({lichen_placeholders})
+            ORDER BY Lichen, Substance
+        """
+
+        extras_query = QSqlQuery(self.db)
+        extras_query.prepare(extras_query_str)
+        for lichen in matching_lichens:
+            extras_query.addBindValue(lichen)
+
+        extras_by_lichen = {lichen: [] for lichen in matching_lichens}
+        if extras_query.exec():
+            while extras_query.next():
+                lichen = extras_query.value(0)
+                substance = extras_query.value(1)
+                if substance and substance not in selected_set:
+                    extras_by_lichen[lichen].append(substance)
+
+        self.results_area.clear()
+        cursor = self.results_area.textCursor()
+
+        # Keep explicit formats so gray "extras" styling does not bleed to next entries.
+        default_text_format = QTextCharFormat()
+        default_text_format.setForeground(self.results_area.palette().text().color())
+
+        extra_text_format = QTextCharFormat(default_text_format)
+        extra_text_format.setForeground(QColor("gray"))
+
+        cursor.insertText(
+            f"Found {len(matching_lichens)} species containing: {', '.join(selected)}\n\n",
+            default_text_format,
+        )
+
+        for index, lichen in enumerate(matching_lichens):
+            extras = extras_by_lichen.get(lichen, [])
+            cursor.insertText(lichen, default_text_format)
+            if extras:
+                cursor.insertText(f" (contains also: {', '.join(extras)})", extra_text_format)
+            if index < len(matching_lichens) - 1:
+                cursor.insertText("\n", default_text_format)
