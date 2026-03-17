@@ -1975,7 +1975,10 @@ class MainWindow(QMainWindow):
             # Columns for A, B, C
             plate_data = aggregated[sid]
             prediction_input = {}
-            current_filter = None
+            # Keep filter-tag state available even when no predictions are run (e.g. references)
+            current_substance_group = self.samples[sid].get('filter_group')
+            current_filter = current_substance_group
+            current_genus = self.samples[sid].get('filter_genus')
 
             # Collect calibration info for this substance
             calibration_info = []
@@ -2156,7 +2159,9 @@ class MainWindow(QMainWindow):
             # 3. Predictions
             matches = []
             if sid > 0 and prediction_input:
-                current_filter = self.samples[sid].get('filter_group')
+                # Re-read in case filter state changed in the meantime
+                current_substance_group = self.samples[sid].get('filter_group')
+                current_filter = current_substance_group
                 current_genus = self.samples[sid].get('filter_genus')
                 f_vis = self.samples[sid].get('filter_vis', False)
                 f_uvs = self.samples[sid].get('filter_uvs', False)
@@ -2185,6 +2190,32 @@ class MainWindow(QMainWindow):
 
             pred_label = QLabel()
             self.samples[sid]['last_matches'] = matches
+
+            # Guard against unset/non-string values while preserving visible active filters
+            current_filter = current_filter or ""
+            current_genus = current_genus or ""
+            f_vis = bool(self.samples[sid].get('filter_vis', False))
+            f_uvs = bool(self.samples[sid].get('filter_uvs', False))
+            f_uvl = bool(self.samples[sid].get('filter_uvl', False))
+            f_aft_vis = self.samples[sid].get('filter_aft_vis') or ""
+            f_aft_uv = self.samples[sid].get('filter_aft_uv') or ""
+
+            filter_tags = ""
+            if current_filter:
+                filter_tags += f" <small style='color:gray'>[{current_filter}]</small>"
+            if current_genus:
+                filter_tags += f" <small style='color:gray'>[Genus: {current_genus}]</small>"
+            if f_vis:
+                filter_tags += " <small style='color:gray'>[Vis]</small>"
+            if f_uvs:
+                filter_tags += " <small style='color:gray'>[UVS]</small>"
+            if f_uvl:
+                filter_tags += " <small style='color:gray'>[UVL]</small>"
+            if f_aft_vis:
+                filter_tags += f" <small style='color:gray'>[After Vis: {f_aft_vis}]</small>"
+            if f_aft_uv:
+                filter_tags += f" <small style='color:gray'>[After UV: {f_aft_uv}]</small>"
+
             if matches:
                  display_matches = matches[:5]
                  match_links = []
@@ -2203,11 +2234,7 @@ class MainWindow(QMainWindow):
                      # keep for reference: This was for QMessageBox implementation of additional results:
                      #match_str += f" <a href='show_more:{sid}' style='color:blue;'>+{more_count} more</a>"
 
-                 if current_filter:
-                     match_str += f" <small style='color:gray'>[{current_filter}]</small>"
-                 if current_genus:
-                     match_str += f" <small style='color:gray'>[Genus: {current_genus}]</small>"
-                     
+                 match_str += filter_tags
                  pred_label.setText(match_str)
                  pred_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
                  pred_label.linkActivated.connect(self.handle_link_click)
@@ -2221,7 +2248,7 @@ class MainWindow(QMainWindow):
                      lambda pos, sid=sid, w=pred_label: self.show_prediction_context_menu(sid, w, pos)
                  )
             else:
-                pred_label.setText("-")
+                pred_label.setText(f"-{filter_tags}" if filter_tags else "-")
                 
             pred_label.setContentsMargins(5, 0, 5, 0)
             self.results_table.setCellWidget(current_row, 5, pred_label)
