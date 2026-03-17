@@ -487,6 +487,7 @@ class MainWindow(QMainWindow):
         self.base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.db_path = os.path.join(self.base_path, "tlcid_database.db")
         self.debug_mode = debug_mode
+        self.analysis_file_path = None  # Last loaded/saved analysis JSON path
         
         # State
         self.samples = {} # {id: {'color': QColor, 'name': str}}
@@ -2361,8 +2362,9 @@ class MainWindow(QMainWindow):
 
     def save_analysis(self):
         import json
+        suggested_path = self.analysis_file_path or ""
         file_name, _ = QFileDialog.getSaveFileName(
-            self, "Save Analysis", "", "JSON Files (*.json)"
+            self, "Save Analysis", suggested_path, "JSON Files (*.json)"
         )
         if not file_name:
             return False
@@ -2410,6 +2412,7 @@ class MainWindow(QMainWindow):
         try:
             with open(file_name, 'w') as f:
                 json.dump(data, f, indent=4)
+            self.analysis_file_path = file_name
             return True
         except Exception as e:
             print(f"Error saving file: {e}")
@@ -2428,6 +2431,7 @@ class MainWindow(QMainWindow):
         try:
             with open(file_name, 'r') as f:
                 data = json.load(f)
+            self.analysis_file_path = file_name
             
             # Reset State
             self.samples = {} # Clear samples
@@ -2641,6 +2645,7 @@ class MainWindow(QMainWindow):
         # Reset Global State
         self.samples = {}
         self.next_sample_id = 1
+        self.analysis_file_path = None
 
         # Reset per-plate ranges to default
         self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
