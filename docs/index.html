@@ -7,50 +7,181 @@
   <meta name="description" content="TLCid helps analyze thin-layer chromatography plates and identify lichen substances." />
   <style>
     :root {
-      --bg: #ffffff;
-      --text: #0f172a;
-      --muted: #475569;
-      --line: #e2e8f0;
+      --bg: #f4f8ff;
+      --bg-2: #eef4ff;
+      --text: #0b1220;
+      --muted: #4a5b76;
+      --line: #dbe6f5;
       --accent: #2563eb;
       --accent-2: #1d4ed8;
-      --card: #f8fafc;
-      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --accent-soft: #dbeafe;
+      --card: rgba(255, 255, 255, 0.82);
+      --shadow-sm: 0 8px 24px rgba(15, 23, 42, 0.08);
+      --shadow-md: 0 16px 40px rgba(15, 23, 42, 0.12);
+      --radius: 18px;
     }
+
     * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
     body {
       margin: 0;
       font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       color: var(--text);
-      background: var(--bg);
-      line-height: 1.6;
+      background:
+        radial-gradient(circle at 20% -10%, #dbeafe 0%, transparent 42%),
+        radial-gradient(circle at 85% -20%, #e0e7ff 0%, transparent 38%),
+        linear-gradient(180deg, var(--bg), var(--bg-2) 45%, #f8fbff 100%);
+      line-height: 1.65;
+      letter-spacing: 0.01em;
     }
+
     .container { width: min(1080px, calc(100% - 2rem)); margin: 0 auto; }
-    header { padding: 3rem 0 1.5rem; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #ffffff, #f8fbff 80%); }
-    .hero { display: grid; gap: 1.5rem; align-items: center; grid-template-columns: 96px 1fr; }
-    .logo { width: 96px; height: 96px; object-fit: contain; border-radius: 16px; box-shadow: var(--shadow); border: 1px solid var(--line); background: #fff; padding: 0.4rem; }
-    h1 { margin: 0; font-size: clamp(1.8rem, 3.2vw, 2.6rem); line-height: 1.2; }
-    .lead { margin: 0.6rem 0 0; color: var(--muted); max-width: 70ch; }
-    .actions { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 1.25rem; }
-    .btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; border-radius: 12px; padding: 0.65rem 1rem; font-weight: 600; border: 1px solid transparent; transition: 120ms ease; }
-    .btn-primary { color: #fff; background: var(--accent); }
-    .btn-primary:hover { background: var(--accent-2); }
-    .btn-secondary { color: var(--text); background: #fff; border-color: var(--line); }
-    .btn-secondary:hover { border-color: #cbd5e1; background: #f8fafc; }
-    main { padding: 2rem 0 3rem; }
-    .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin-bottom: 1.75rem; }
-    .card { border: 1px solid var(--line); background: var(--card); border-radius: 16px; padding: 1rem 1rem 1.1rem; }
-    .card h2 { margin: 0 0 0.35rem; font-size: 1.05rem; }
-    .card p { margin: 0; color: var(--muted); font-size: 0.95rem; }
-    .card ul, .card ol { margin: 0.4rem 0 0; padding-left: 1.2rem; color: var(--muted); }
-    .card li { margin: 0.25rem 0; }
-    .screenshot { margin-top: 0.5rem; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); background: #fff; }
+
+    header {
+      padding: 3.5rem 0 2rem;
+      border-bottom: 1px solid rgba(219, 230, 245, 0.7);
+      backdrop-filter: blur(6px);
+    }
+
+    .hero {
+      display: grid;
+      gap: 1.5rem;
+      align-items: center;
+      grid-template-columns: 96px 1fr;
+    }
+
+    .logo {
+      width: 96px;
+      height: 96px;
+      object-fit: contain;
+      border-radius: 22px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 0.45rem;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 3.5vw, 2.9rem);
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+    }
+
+    .lead {
+      margin: 0.75rem 0 0;
+      color: var(--muted);
+      max-width: 70ch;
+      font-size: 1.04rem;
+    }
+
+    .actions {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      margin-top: 1.35rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      border-radius: 13px;
+      padding: 0.68rem 1.08rem;
+      font-weight: 620;
+      border: 1px solid transparent;
+      transition: 160ms ease;
+      box-shadow: 0 2px 0 rgba(15, 23, 42, 0.04);
+    }
+
+    .btn-primary {
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      box-shadow: 0 10px 24px rgba(37, 99, 235, 0.28);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 14px 28px rgba(29, 78, 216, 0.34);
+    }
+
+    .btn-secondary {
+      color: #12305f;
+      background: rgba(255, 255, 255, 0.88);
+      border-color: var(--line);
+    }
+
+    .btn-secondary:hover {
+      border-color: #c2d4ef;
+      background: #ffffff;
+      transform: translateY(-1px);
+    }
+
+    main { padding: 2.25rem 0 3.25rem; }
+
+    .grid {
+      display: grid;
+      gap: 1.25rem;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      margin-bottom: 1.75rem;
+    }
+
+    .card {
+      border: 1px solid rgba(219, 230, 245, 0.9);
+      background: var(--card);
+      backdrop-filter: blur(8px);
+      border-radius: var(--radius);
+      padding: 1.05rem 1.1rem 1.18rem;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .card h2 {
+      margin: 0 0 0.45rem;
+      font-size: 1.08rem;
+      letter-spacing: -0.01em;
+    }
+
+    .card p { margin: 0; color: var(--muted); font-size: 0.965rem; }
+    .card ul, .card ol { margin: 0.5rem 0 0; padding-left: 1.2rem; color: var(--muted); }
+    .card li { margin: 0.28rem 0; }
+
+    .screenshot {
+      margin-top: 0.55rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow-md);
+      background: #fff;
+    }
+
     .screenshot img { display: block; width: 100%; height: auto; }
-    footer { border-top: 1px solid var(--line); color: var(--muted); padding: 1rem 0 2rem; font-size: 0.9rem; }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f1f5f9; padding: 0.1rem 0.35rem; border-radius: 0.4rem; font-size: 0.9em; }
+
+    footer {
+      border-top: 1px solid rgba(219, 230, 245, 0.75);
+      color: var(--muted);
+      padding: 1rem 0 2rem;
+      font-size: 0.9rem;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: var(--accent-soft);
+      color: #0f3f9a;
+      padding: 0.12rem 0.36rem;
+      border-radius: 0.4rem;
+      font-size: 0.9em;
+    }
+
+    a { color: var(--accent-2); }
+
     @media (max-width: 600px) {
       .hero { grid-template-columns: 1fr; text-align: center; }
       .logo { margin-inline: auto; }
       .actions { justify-content: center; }
+      header { padding-top: 2.6rem; }
     }
   </style>
 </head>
@@ -113,7 +244,7 @@
 
   </main>
   <footer>
-    <div class="container"><span id="year"></span> TLCid · Philipp Resl</div>
+    <div class="container"><span id="year"></span> · TLCid · Philipp Resl</div>
   </footer>
   <script>
   document.getElementById("year").textContent = new Date().getFullYear();
