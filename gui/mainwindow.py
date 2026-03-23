@@ -2279,7 +2279,7 @@ class MainWindow(QMainWindow):
                  
                  if len(matches) > 5:
                      more_count = len(matches) - 5
-                     match_str += f"+{more_count} more"
+                     match_str += f" + {more_count} more"
                      # keep for reference: This was for QMessageBox implementation of additional results:
                      #match_str += f" <a href='show_more:{sid}' style='color:blue;'>+{more_count} more</a>"
 
@@ -2887,30 +2887,27 @@ class MainWindow(QMainWindow):
                     continue
 
             if self.detection_method == "Range":
-                # Range Logic: ALL present plates must be within their respective range
+                # Range Logic: compare all plates that have both an observed and reference Rf.
+                # Missing database Rf values are ignored instead of disqualifying the substance.
                 match = True
                 dist = 0.0
                 count = 0
 
                 for plate_idx, obs_val in input_data.items():
                    if plate_idx < len(item['rf']):
-                       ref_val = item['rf'][plate_idx]
-                       if ref_val is None:
+                        ref_val = item['rf'][plate_idx]
+                        if ref_val is None:
+                            continue
+
+                        # Use per-plate range
+                        plate_range = self.plate_ranges.get(plate_idx, self.detection_range)
+                        error = abs(obs_val - ref_val)
+                        if error > plate_range:
                            match = False
                            break
 
-                       # Use per-plate range
-                       plate_range = self.plate_ranges.get(plate_idx, self.detection_range)
-                       error = abs(obs_val - ref_val)
-                       if error > plate_range:
-                           match = False
-                           break
-
-                       dist += error ** 2
-                       count += 1
-                   else:
-                       match = False
-                       break
+                        dist += error ** 2
+                        count += 1
 
                 if match and count > 0:
                     mse = dist / count
