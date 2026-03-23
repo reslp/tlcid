@@ -83,9 +83,9 @@ class DatabaseTableWindow(QWidget):
         self.view.setAlternatingRowColors(True)
         self.view.setSortingEnabled(True)
         
-        # Stretch last column or resize to contents
         header = self.view.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.view.resizeColumnsToContents()
 
         # Custom column order/width for Substances table
         if self.table_name == "Substances":
@@ -124,6 +124,10 @@ class DatabaseTableWindow(QWidget):
         if name_idx != -1:
             current_width = self.view.columnWidth(name_idx)
             self.view.setColumnWidth(name_idx, max(60, int(current_width * (2 / 3))))
+
+        bprime_idx = self.model.fieldIndex("Bprime")
+        if bprime_idx != -1:
+            self.model.setHeaderData(bprime_idx, Qt.Orientation.Horizontal, "B'")
         
     def closeEvent(self, event):
         # Optional: cleanup or hide
