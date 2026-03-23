@@ -514,6 +514,7 @@ class MainWindow(QMainWindow):
         self.samples = {} # {id: {'color': QColor, 'name': str}}
         self.genus_to_substances = {} # Cache for genus-specific substance filtering
         self.next_sample_id = 1
+        self.active_regular_marking_sid = None
         self.colors = [
             QColor("cyan"), QColor("magenta"), QColor("yellow"), 
             QColor("blue"), QColor("orange"), QColor("purple"), 
@@ -1173,9 +1174,51 @@ class MainWindow(QMainWindow):
             return
 
         menu = QMenu(self)
+        remark_action = menu.addAction("Remark substance")
+        remark_action.triggered.connect(lambda checked=False, s=sid: self.remark_substance(s))
         remove_action = menu.addAction("Remove substance")
         remove_action.triggered.connect(lambda checked=False, s=sid: self.remove_substance(s))
         menu.exec(label_widget.mapToGlobal(pos))
+
+    def get_marked_plate_indices(self, sid):
+        """Return sorted plate indices that already contain a spot for this substance."""
+        marked = []
+        for plate_idx, slot in enumerate(self.slots):
+            if any(spot.get('sample_id') == sid for spot in slot.image_label.spots):
+                marked.append(plate_idx)
+        return marked
+
+    def current_marking_sid(self):
+        """Return the sample ID currently being marked, if any."""
+        if self.mark_substance_button.isChecked():
+            return self.active_regular_marking_sid
+        if self.mark_atranorin_button.isChecked():
+            return 0
+        if self.mark_norstictic_button.isChecked():
+            return -1
+        if self.mark_rhizocarpic_button.isChecked():
+            return -2
+        if self.mark_lecanoric_button.isChecked():
+            return -3
+        if self.mark_evernic_button.isChecked():
+            return -4
+        return None
+
+    def remark_substance(self, sid):
+        """Re-enter marking mode for a regular substance that is missing plate spots."""
+        if sid not in self.samples or sid <= 0:
+            return
+
+        if len(self.get_marked_plate_indices(sid)) >= len(self.slots):
+            return
+
+        self.active_regular_marking_sid = sid
+        if self.mark_substance_button.isChecked():
+            self.toggle_mark_substance(True)
+            return
+
+        self.mark_substance_button.setChecked(True)
+        self.toggle_mark_substance(True)
 
     def remove_substance(self, sid):
         """Remove a substance from result state and from all plate spots."""
@@ -1183,7 +1226,7 @@ class MainWindow(QMainWindow):
             return
 
         # If this substance is currently in an active marking mode, stop that mode first.
-        if sid > 0 and self.mark_substance_button.isChecked() and sid == (self.next_sample_id - 1):
+        if sid > 0 and self.mark_substance_button.isChecked() and sid == self.active_regular_marking_sid:
             self.mark_substance_button.click()
         elif sid == 0 and self.mark_atranorin_button.isChecked():
             self.mark_atranorin_button.click()
@@ -1704,6 +1747,7 @@ class MainWindow(QMainWindow):
             self.range_main.blockSignals(False)
 
     def deactivate_marking_mode(self):
+        self.active_regular_marking_sid = None
         for slot in self.slots:
             slot.image_label.set_add_sample_mode(False)
 
@@ -1713,8 +1757,11 @@ class MainWindow(QMainWindow):
                 
             # Entering Add Mode
             self.mark_substance_button.setText("Stop Marking")
-            sid = self.next_sample_id
-            self.next_sample_id += 1
+            sid = self.active_regular_marking_sid
+            if sid is None:
+                sid = self.next_sample_id
+                self.next_sample_id += 1
+                self.active_regular_marking_sid = sid
             color = self.colors[(sid - 1) % len(self.colors)]
             self.activate_marking_mode(sid, color, f"Substance {sid}")
         else:
@@ -1829,13 +1876,7 @@ class MainWindow(QMainWindow):
         # remove it from self.samples to clear it from the results list.
         # We keep IDs <= 0 as they represent reference standards (Atranorin/Norstictic).
         # Determine which substance is currently being marked (if any)
-        currently_marking_sid = None
-        if self.mark_substance_button.isChecked():
-            currently_marking_sid = self.next_sample_id - 1
-        elif self.mark_atranorin_button.isChecked():
-            currently_marking_sid = 0
-        elif self.mark_norstictic_button.isChecked():
-            currently_marking_sid = -1
+        currently_marking_sid = self.current_marking_sid()
 
         ids_to_remove = []
         for sid in self.samples:
@@ -1877,7 +1918,7 @@ class MainWindow(QMainWindow):
 
         # Check for auto-stop if currently marking
         if self.mark_substance_button.isChecked():
-            current_sid = self.next_sample_id - 1
+            current_sid = self.active_regular_marking_sid
             # Check if this sample has entries for all 3 plates (indices 0, 1, 2)
             if current_sid in aggregated and len(aggregated[current_sid]) == 3:
                 self.mark_substance_button.click()
@@ -2729,6 +2770,7 @@ class MainWindow(QMainWindow):
         # Reset Global State
         self.samples = {}
         self.next_sample_id = 1
+        self.active_regular_marking_sid = None
         self.analysis_file_path = None
 
         # Reset per-plate ranges to default
