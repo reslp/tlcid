@@ -11,7 +11,7 @@ from PyQt6.QtCore import pyqtSignal
 
 
 class SettingsWindow(QWidget):
-    settingsChanged = pyqtSignal(str, float, bool)
+    settingsChanged = pyqtSignal(str, float, bool, bool)
 
     def __init__(self, parent=None):
         super().__init__()
@@ -47,6 +47,11 @@ class SettingsWindow(QWidget):
         self.relative_rf_checkbox.stateChanged.connect(self.on_value_changed)
         layout.addWidget(self.relative_rf_checkbox)
 
+        self.allow_missing_rf_checkbox = QCheckBox("Allow missing Rf values")
+        self.allow_missing_rf_checkbox.setChecked(False)
+        self.allow_missing_rf_checkbox.stateChanged.connect(self.on_value_changed)
+        layout.addWidget(self.allow_missing_rf_checkbox)
+
         layout.addStretch()
 
         # Close Button
@@ -70,22 +75,26 @@ class SettingsWindow(QWidget):
         method = self.method_combo.currentText()
         range_val = self.range_spin.value()
         relative_rf = self.relative_rf_checkbox.isChecked()
-        self.settingsChanged.emit(method, range_val, relative_rf)
+        allow_missing_rf = self.allow_missing_rf_checkbox.isChecked()
+        self.settingsChanged.emit(method, range_val, relative_rf, allow_missing_rf)
 
-    def set_current_settings(self, method, range_val, relative_rf=True):
+    def set_current_settings(self, method, range_val, relative_rf=True, allow_missing_rf=False):
         self.method_combo.blockSignals(True)
         self.range_spin.blockSignals(True)
         self.relative_rf_checkbox.blockSignals(True)
+        self.allow_missing_rf_checkbox.blockSignals(True)
 
         index = self.method_combo.findText(method)
         if index >= 0:
             self.method_combo.setCurrentIndex(index)
         self.range_spin.setValue(range_val)
         self.relative_rf_checkbox.setChecked(relative_rf)
+        self.allow_missing_rf_checkbox.setChecked(allow_missing_rf)
 
         self.method_combo.blockSignals(False)
         self.range_spin.blockSignals(False)
         self.relative_rf_checkbox.blockSignals(False)
+        self.allow_missing_rf_checkbox.blockSignals(False)
 
         # Keep range visibility in sync with method even when signals are blocked.
         is_range = self.method_combo.currentText() == "Range"

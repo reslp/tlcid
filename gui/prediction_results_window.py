@@ -1,5 +1,6 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QPushButton, QLabel, QHBoxLayout, QWidget, QMenu)
+                             QHeaderView, QPushButton, QLabel, QHBoxLayout, QWidget, QMenu,
+                             QCheckBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtSql import QSqlDatabase, QSqlQuery
@@ -100,9 +101,9 @@ class PredictionResultsWindow(QDialog):
         header_layout.addWidget(header_label)
         header_layout.addStretch()
 
-        count_label = QLabel(f"{len(self.matches)} substance(s) found")
-        count_label.setStyleSheet("color: gray;")
-        header_layout.addWidget(count_label)
+        self.count_label = QLabel(f"{len(self.matches)} substance(s) found")
+        self.count_label.setStyleSheet("color: gray;")
+        header_layout.addWidget(self.count_label)
 
         layout.addLayout(header_layout)
 
@@ -134,9 +135,6 @@ class PredictionResultsWindow(QDialog):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_prediction_context_menu)
 
-        # Populate table
-        self.populate_table()
-
         # Detail panel (left), shown after first click
         self.detail_panel = QWidget()
         self.detail_panel_layout = QVBoxLayout(self.detail_panel)
@@ -149,8 +147,15 @@ class PredictionResultsWindow(QDialog):
 
         layout.addLayout(content_layout)
 
-        # Close button
+        # Populate table after the optional detail panel exists.
+        self.populate_table()
+
+        self.allow_missing_rf_checkbox = QCheckBox("Allow missing Rf values")
+        self.allow_missing_rf_checkbox.stateChanged.connect(self.on_allow_missing_rf_changed)
+
+        # Footer controls
         button_layout = QHBoxLayout()
+        button_layout.addWidget(self.allow_missing_rf_checkbox)
         button_layout.addStretch()
 
         close_button = QPushButton("Close")
@@ -158,6 +163,57 @@ class PredictionResultsWindow(QDialog):
         button_layout.addWidget(close_button)
 
         layout.addLayout(button_layout)
+        self.update_allow_missing_rf_checkbox_state()
+
+    def _parent_window(self):
+        return self.parent() if self.parent() is not None else None
+
+    def _global_allow_missing_rf_values(self):
+        parent = self._parent_window()
+        return bool(getattr(parent, "allow_missing_rf_values", False))
+
+    def _local_allow_missing_rf_values(self):
+        parent = self._parent_window()
+        if parent is None or not hasattr(parent, "samples"):
+            return False
+        return bool(parent.samples.get(self.substance_id, {}).get("allow_missing_rf_values", False))
+
+    def update_allow_missing_rf_checkbox_state(self):
+        global_enabled = self._global_allow_missing_rf_values()
+        self.allow_missing_rf_checkbox.blockSignals(True)
+        self.allow_missing_rf_checkbox.setChecked(global_enabled or self._local_allow_missing_rf_values())
+        self.allow_missing_rf_checkbox.setEnabled(not global_enabled)
+        self.allow_missing_rf_checkbox.setToolTip(
+            "Enabled globally in Settings." if global_enabled else ""
+        )
+        self.allow_missing_rf_checkbox.blockSignals(False)
+
+    def refresh_matches(self):
+        parent = self._parent_window()
+        if parent is None or not hasattr(parent, "predict_matches") or not hasattr(parent, "samples"):
+            return
+
+        sample = parent.samples.get(self.substance_id, {})
+        self.matches = parent.predict_matches(
+            self.plate_data,
+            filter_group=sample.get('filter_group'),
+            filter_genus=sample.get('filter_genus'),
+            filter_vis=sample.get('filter_vis', False),
+            filter_uvs=sample.get('filter_uvs', False),
+            filter_uvl=sample.get('filter_uvl', False),
+            filter_aft_vis=sample.get('filter_aft_vis'),
+            filter_aft_uv=sample.get('filter_aft_uv'),
+            allow_missing_rf_values=parent.sample_allows_missing_rf_values(self.substance_id),
+        )
+        self.populate_table()
+        self.update_allow_missing_rf_checkbox_state()
+
+    def on_allow_missing_rf_changed(self, state):
+        parent = self._parent_window()
+        if parent is None or not hasattr(parent, "set_sample_allow_missing_rf_values"):
+            return
+        parent.set_sample_allow_missing_rf_values(self.substance_id, state == Qt.CheckState.Checked.value)
+        self.refresh_matches()
 
     def on_table_cell_clicked(self, row, column):
         """Show substance detail in right panel when clicking on the substance name cell."""
@@ -254,7 +310,19 @@ class PredictionResultsWindow(QDialog):
 
     def populate_table(self):
         """Populate the table with prediction results."""
+        self.table.setSortingEnabled(False)
+        self.table.clearContents()
         self.table.setRowCount(len(self.matches))
+        self.count_label.setText(f"{len(self.matches)} substance(s) found")
+
+        if hasattr(self, "detail_panel_layout"):
+            while self.detail_panel_layout.count():
+                child = self.detail_panel_layout.takeAt(0)
+                widget = child.widget()
+                if widget is not None:
+                    widget.deleteLater()
+        if hasattr(self, "detail_panel"):
+            self.detail_panel.hide()
 
         for row, (score, name) in enumerate(self.matches):
             # Substance name
@@ -290,4 +358,5 @@ class PredictionResultsWindow(QDialog):
                 score_item.setBackground(QColor(255, 220, 220))  # Light red
 
         # Sort by score (ascending) by default
+        self.table.setSortingEnabled(True)
         self.table.sortByColumn(4, Qt.SortOrder.AscendingOrder)

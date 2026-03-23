@@ -564,6 +564,7 @@ class MainWindow(QMainWindow):
         self.detection_method = "Range"
         self.detection_range = 0.05  # Global default (used as initial value for plates)
         self.relative_rf_display = True
+        self.allow_missing_rf_values = False
 
         # Per-plate range settings: {plate_index: range_value}
         self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
@@ -1456,7 +1457,12 @@ class MainWindow(QMainWindow):
             self.settings_window = SettingsWindow()
             self.settings_window.settingsChanged.connect(self.update_detection_settings)
             
-        self.settings_window.set_current_settings(self.detection_method, self.detection_range, self.relative_rf_display)
+        self.settings_window.set_current_settings(
+            self.detection_method,
+            self.detection_range,
+            self.relative_rf_display,
+            self.allow_missing_rf_values,
+        )
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
@@ -1627,18 +1633,35 @@ class MainWindow(QMainWindow):
             return f"{value * 100:.0f}"
         return f"{value:.2f}"
 
-    def update_detection_settings(self, method, range_val, relative_rf=True):
+    def update_detection_settings(self, method, range_val, relative_rf=True, allow_missing_rf_values=False):
         self.detection_method = method
         self.detection_range = range_val
         self.relative_rf_display = relative_rf
+        self.allow_missing_rf_values = allow_missing_rf_values
         for slot in self.slots:
             slot.set_relative_rf_display(relative_rf)
         self.update_detection_status_label()
 
         # Keep settings window controls synchronized when open
         if hasattr(self, 'settings_window') and self.settings_window is not None:
-            self.settings_window.set_current_settings(method, range_val, relative_rf)
+            self.settings_window.set_current_settings(
+                method,
+                range_val,
+                relative_rf,
+                allow_missing_rf_values,
+            )
 
+        self.update_results_display()
+
+    def sample_allows_missing_rf_values(self, sid):
+        if self.allow_missing_rf_values:
+            return True
+        return bool(self.samples.get(sid, {}).get('allow_missing_rf_values', False))
+
+    def set_sample_allow_missing_rf_values(self, sid, allow_missing_rf_values):
+        if sid not in self.samples:
+            return
+        self.samples[sid]['allow_missing_rf_values'] = bool(allow_missing_rf_values)
         self.update_results_display()
 
     def on_main_range_changed(self, val):
@@ -2225,7 +2248,8 @@ class MainWindow(QMainWindow):
                                                filter_uvs=f_uvs,
                                                filter_uvl=f_uvl,
                                                filter_aft_vis=f_aft_vis,
-                                               filter_aft_uv=f_aft_uv)
+                                               filter_aft_uv=f_aft_uv,
+                                               allow_missing_rf_values=self.sample_allows_missing_rf_values(sid))
 
                 # Print prediction results
                 _safe_print(f"  Predictions ({len(matches)} match{'es' if len(matches) != 1 else ''}):")
@@ -2425,6 +2449,7 @@ class MainWindow(QMainWindow):
             "detection_method": self.detection_method,
             "detection_range": self.detection_range,
             "relative_rf_display": self.relative_rf_display,
+            "allow_missing_rf_values": self.allow_missing_rf_values,
             "plate_ranges": self.plate_ranges,
             "calibration_mode": self.calibration_mode,
             "samples": {},
@@ -2445,6 +2470,7 @@ class MainWindow(QMainWindow):
                 "filter_aft_vis": sdata.get('filter_aft_vis'),
                 "filter_aft_uv": sdata.get('filter_aft_uv'),
                 "font_size": sdata.get('font_size', 8),
+                "allow_missing_rf_values": sdata.get('allow_missing_rf_values', False),
                 "is_reference": sdata.get('is_reference', False),
                 "reference_rf": sdata.get('reference_rf')
             }
@@ -2495,6 +2521,8 @@ class MainWindow(QMainWindow):
                  self.detection_range = float(data["detection_range"])
             if "relative_rf_display" in data:
                  self.relative_rf_display = bool(data["relative_rf_display"])
+            if "allow_missing_rf_values" in data:
+                 self.allow_missing_rf_values = bool(data["allow_missing_rf_values"])
             if "plate_ranges" in data:
                  self.plate_ranges = {int(k): v for k, v in data["plate_ranges"].items()}
             if "calibration_mode" in data:
@@ -2554,6 +2582,7 @@ class MainWindow(QMainWindow):
                     'filter_aft_vis': sdata.get('filter_aft_vis'),
                     'filter_aft_uv': sdata.get('filter_aft_uv'),
                     'font_size': sdata.get('font_size', 8),
+                    'allow_missing_rf_values': sdata.get('allow_missing_rf_values', False),
                     'is_reference': sdata.get('is_reference', False),
                     'reference_rf': sdata.get('reference_rf')
                 }
@@ -2844,7 +2873,8 @@ class MainWindow(QMainWindow):
         
     def predict_matches(self, input_data, filter_group=None, filter_genus=None,
                         filter_vis=False, filter_uvs=False, filter_uvl=False,
-                        filter_aft_vis=None, filter_aft_uv=None):
+                        filter_aft_vis=None, filter_aft_uv=None,
+                        allow_missing_rf_values=False):
         # input_data: {plate_idx: value}
         # Returns list of top names
 
@@ -2888,7 +2918,7 @@ class MainWindow(QMainWindow):
 
             if self.detection_method == "Range":
                 # Range Logic: compare all plates that have both an observed and reference Rf.
-                # Missing database Rf values are ignored instead of disqualifying the substance.
+                # Missing database Rf values are optional and only ignored when enabled.
                 match = True
                 dist = 0.0
                 count = 0
@@ -2897,7 +2927,10 @@ class MainWindow(QMainWindow):
                    if plate_idx < len(item['rf']):
                         ref_val = item['rf'][plate_idx]
                         if ref_val is None:
-                            continue
+                            if allow_missing_rf_values:
+                                continue
+                            match = False
+                            break
 
                         # Use per-plate range
                         plate_range = self.plate_ranges.get(plate_idx, self.detection_range)
@@ -2915,17 +2948,22 @@ class MainWindow(QMainWindow):
 
             else:
                 # MSE Logic
+                match = True
                 dist = 0.0
                 count = 0
 
                 for plate_idx, obs_val in input_data.items():
                     if plate_idx < len(item['rf']): # Ensure index is valid
                         ref_val = item['rf'][plate_idx]
-                        if ref_val is not None:
-                            dist += (obs_val - ref_val) ** 2
-                            count += 1
+                        if ref_val is None:
+                            if allow_missing_rf_values:
+                                continue
+                            match = False
+                            break
+                        dist += (obs_val - ref_val) ** 2
+                        count += 1
 
-                if count > 0:
+                if match and count > 0:
                     mse = dist / count
                     scores.append((mse, name))
 
