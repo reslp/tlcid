@@ -10,6 +10,18 @@ import html
 
 from gui.report_generator import PDFReportGenerator
 
+
+class SortableTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem that sorts by a stored underlying value when available."""
+
+    def __lt__(self, other):
+        left_value = self.data(Qt.ItemDataRole.UserRole)
+        right_value = other.data(Qt.ItemDataRole.UserRole) if other is not None else None
+        if left_value is not None and right_value is not None:
+            return left_value < right_value
+        return super().__lt__(other)
+
+
 class SquareLabel(QLabel):
     linesMoved = pyqtSignal(float, float) # Signal emitting (start_y, front_y)
     spotsChanged = pyqtSignal(list) # Signal emitting list of spots data
@@ -478,6 +490,15 @@ class ImageSlot(QWidget):
         export_pixmap.save(file_name)
 
 class MainWindow(QMainWindow):
+    RESULTS_COL_COLOR = 0
+    RESULTS_COL_REFERENCE = 1
+    RESULTS_COL_SUBSTANCE = 2
+    RESULTS_COL_PLATE_A = 3
+    RESULTS_COL_PLATE_B = 4
+    RESULTS_COL_PLATE_C = 5
+    RESULTS_COL_PREDICTIONS = 6
+    RESULTS_COL_ALL_RESULTS = 7
+
     def __init__(self, parent=None, debug_mode=False):
         super().__init__(parent)
         self.setWindowTitle("TLCid")
@@ -718,37 +739,40 @@ class MainWindow(QMainWindow):
         # Results Display using QTableWidget
         self.results_table = QTableWidget()
         self.results_table.setColumnCount(8)
-        self.results_table.setHorizontalHeaderLabels(["Color", "Substance", "Plate A", "Plate B'", "Plate C", "Predictions", "Reference", "All Results"])
+        self.results_table.setHorizontalHeaderLabels(["Color", "Reference", "Substance", "Plate A", "Plate B'", "Plate C", "Predictions", "All Results"])
         
         # Column Resizing Logic
         header = self.results_table.horizontalHeader()
 
         # 0: Color (Fixed, Small)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.results_table.setColumnWidth(0, 50)
+        header.setSectionResizeMode(self.RESULTS_COL_COLOR, QHeaderView.ResizeMode.Fixed)
+        self.results_table.setColumnWidth(self.RESULTS_COL_COLOR, 50)
 
-        # 1: Substance (Interactive/Stretch?) - Let's use Interactive defaults but set width
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        self.results_table.setColumnWidth(1, 150)
+        # 1: Reference (Fixed, Small)
+        header.setSectionResizeMode(self.RESULTS_COL_REFERENCE, QHeaderView.ResizeMode.Fixed)
+        self.results_table.setColumnWidth(self.RESULTS_COL_REFERENCE, 70)
 
-        # 2, 3, 4: Plates (Fixed, Small - ~1/5 of typical width)
-        for i in [2, 3, 4]:
+        # 2: Substance
+        header.setSectionResizeMode(self.RESULTS_COL_SUBSTANCE, QHeaderView.ResizeMode.Interactive)
+        self.results_table.setColumnWidth(self.RESULTS_COL_SUBSTANCE, 150)
+
+        # 3, 4, 5: Plates
+        for i in [self.RESULTS_COL_PLATE_A, self.RESULTS_COL_PLATE_B, self.RESULTS_COL_PLATE_C]:
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
             self.results_table.setColumnWidth(i, 60)
 
-        # 5: Predictions (Fill remaining space)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
-
-        # 6: Reference (Fixed, Small)
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
-        self.results_table.setColumnWidth(6, 70)
+        # 6: Predictions (Fill remaining space)
+        header.setSectionResizeMode(self.RESULTS_COL_PREDICTIONS, QHeaderView.ResizeMode.Stretch)
 
         # 7: All Results button (Fixed, Small)
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
-        self.results_table.setColumnWidth(7, 90)
+        header.setSectionResizeMode(self.RESULTS_COL_ALL_RESULTS, QHeaderView.ResizeMode.Fixed)
+        self.results_table.setColumnWidth(self.RESULTS_COL_ALL_RESULTS, 90)
         
         # Ensure horizontal scrolling is possible
         self.results_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.results_table.setSortingEnabled(True)
+        self.results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.results_table.customContextMenuRequested.connect(self.show_results_table_context_menu)
         
         # Row Height
         # Connect Cell Click
@@ -759,13 +783,31 @@ class MainWindow(QMainWindow):
         self.create_menu()
 
     def handle_table_click(self, row, col):
-        if col == 0:
+        if col == self.RESULTS_COL_COLOR:
             # Color Column Clicked
             item = self.results_table.item(row, col)
             if item:
                 sid = item.data(Qt.ItemDataRole.UserRole)
                 if sid is not None:
-                     self.change_sample_color(sid)
+                    self.change_sample_color(sid)
+        elif col == self.RESULTS_COL_SUBSTANCE:
+            item = self.results_table.item(row, col)
+            if item:
+                sid = item.data(Qt.ItemDataRole.UserRole + 1)
+                if sid is not None:
+                    self.open_characteristics_window(sid)
+
+    def show_results_table_context_menu(self, pos):
+        """Show context menu for sortable item-based cells in the results table."""
+        item = self.results_table.itemAt(pos)
+        if item is None or item.column() != self.RESULTS_COL_SUBSTANCE:
+            return
+
+        sid = item.data(Qt.ItemDataRole.UserRole + 1)
+        if sid is None:
+            return
+
+        self.show_substance_context_menu(sid, self.results_table.viewport(), pos)
 
     def handle_reference_checkbox(self, state, sid):
         """Handle when the reference checkbox is toggled."""
@@ -1933,6 +1975,10 @@ class MainWindow(QMainWindow):
         # Store Scroll Position
         v_scroll = self.results_table.verticalScrollBar().value()
         h_scroll = self.results_table.horizontalScrollBar().value()
+        header = self.results_table.horizontalHeader()
+        sort_column = header.sortIndicatorSection()
+        sort_order = header.sortIndicatorOrder()
+        self.results_table.setSortingEnabled(False)
 
         # Render to Table
         self.results_table.setRowCount(0)
@@ -1958,25 +2004,19 @@ class MainWindow(QMainWindow):
             color_item.setBackground(color)
             color_item.setData(Qt.ItemDataRole.UserRole, sid) # Store SID
             color_item.setFlags(Qt.ItemFlag.NoItemFlags) # Non-editable/selectable
-            self.results_table.setItem(current_row, 0, color_item)
+            self.results_table.setItem(current_row, self.RESULTS_COL_COLOR, color_item)
             
             # 2. Substance Name (Clickable Link)
-            name_label = QLabel()
             name_text = self.samples[sid].get('assigned_name')
             if not name_text:
                 name_text = self.samples[sid]['name']
-            
-            hex_c = color.name()
-            # Link style
-            name_label.setText(f"<a href='edit_sample:{sid}' style='color:steelblue; text-decoration:none;'><b>{name_text}</b></a>")
-            name_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
-            name_label.linkActivated.connect(self.handle_link_click)
-            name_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            name_label.customContextMenuRequested.connect(
-                lambda pos, sid=sid, w=name_label: self.show_substance_context_menu(sid, w, pos)
-            )
-            name_label.setContentsMargins(5, 0, 5, 0)
-            self.results_table.setCellWidget(current_row, 1, name_label)
+
+            name_item = SortableTableWidgetItem(name_text)
+            name_item.setData(Qt.ItemDataRole.UserRole, name_text.casefold())
+            name_item.setData(Qt.ItemDataRole.UserRole + 1, sid)
+            name_item.setForeground(QColor("steelblue"))
+            name_item.setToolTip("Click to edit this substance; right-click to remove it")
+            self.results_table.setItem(current_row, self.RESULTS_COL_SUBSTANCE, name_item)
 
             # Columns for A, B, C
             plate_data = aggregated[sid]
@@ -1990,9 +2030,10 @@ class MainWindow(QMainWindow):
             calibration_info = []
 
             for plate_idx, label in enumerate(self.plate_labels):
-                col_idx = 2 + plate_idx
+                col_idx = self.RESULTS_COL_PLATE_A + plate_idx
 
                 val_str = "-"
+                sort_value = float("inf")
                 if plate_idx in plate_data:
                     raw_val = plate_data[plate_idx][0]
 
@@ -2140,8 +2181,10 @@ class MainWindow(QMainWindow):
 
                     prediction_input[plate_idx] = corrected_val
                     val_str = self.format_rf_value(corrected_val)
+                    sort_value = corrected_val
 
-                item = QTableWidgetItem(val_str)
+                item = SortableTableWidgetItem(val_str)
+                item.setData(Qt.ItemDataRole.UserRole, sort_value)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.results_table.setItem(current_row, col_idx, item)
 
@@ -2257,9 +2300,9 @@ class MainWindow(QMainWindow):
                 pred_label.setText(f"-{filter_tags}" if filter_tags else "-")
                 
             pred_label.setContentsMargins(5, 0, 5, 0)
-            self.results_table.setCellWidget(current_row, 5, pred_label)
+            self.results_table.setCellWidget(current_row, self.RESULTS_COL_PREDICTIONS, pred_label)
 
-            # 4. Reference Checkbox (Column 6)
+            # 4. Reference Checkbox
             # Show checkboxes for regular substances and predefined reference substances
             reference_sids = {0, -1, -2, -3, -4}
             if sid > 0 or sid in reference_sids:
@@ -2285,25 +2328,28 @@ class MainWindow(QMainWindow):
                 ref_checkbox.stateChanged.connect(lambda state, sid=sid: self.handle_reference_checkbox(state, sid))
 
                 ref_layout.addWidget(ref_checkbox)
-                self.results_table.setCellWidget(current_row, 6, ref_container)
+                self.results_table.setCellWidget(current_row, self.RESULTS_COL_REFERENCE, ref_container)
             else:
                 empty_label = QLabel()
                 empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.results_table.setCellWidget(current_row, 6, empty_label)
+                self.results_table.setCellWidget(current_row, self.RESULTS_COL_REFERENCE, empty_label)
 
-            # 5. All Results Button (Column 7)
+            # 5. All Results Button
             # Show button only for regular substances (sid > 0) with predictions
             if sid > 0 and matches:
                 results_button = QPushButton("View All")
                 results_button.setProperty('sid', sid)
                 results_button.clicked.connect(lambda checked, s=sid, m=matches, p=prediction_input, n=self.samples[sid].get('assigned_name') or self.samples[sid]['name']: self.show_prediction_results(s, m, p, n))
-                self.results_table.setCellWidget(current_row, 7, results_button)
+                self.results_table.setCellWidget(current_row, self.RESULTS_COL_ALL_RESULTS, results_button)
             else:
                 empty_button_label = QLabel()
                 empty_button_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.results_table.setCellWidget(current_row, 7, empty_button_label)
+                self.results_table.setCellWidget(current_row, self.RESULTS_COL_ALL_RESULTS, empty_button_label)
 
         # Restore Scroll Position
+        self.results_table.setSortingEnabled(True)
+        if sort_column >= 0:
+            self.results_table.sortItems(sort_column, sort_order)
         self.results_table.verticalScrollBar().setValue(v_scroll)
         self.results_table.horizontalScrollBar().setValue(h_scroll)
 

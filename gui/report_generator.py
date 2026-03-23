@@ -251,7 +251,11 @@ class PDFReportGenerator:
 
             row = self.window._find_row_by_sid(sid)
             spot_rf = []
-            for col in (2, 3, 4):
+            for col in (
+                self.window.RESULTS_COL_PLATE_A,
+                self.window.RESULTS_COL_PLATE_B,
+                self.window.RESULTS_COL_PLATE_C,
+            ):
                 txt = "-"
                 item = self.window.results_table.item(row, col) if row is not None else None
                 if item:
