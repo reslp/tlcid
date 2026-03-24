@@ -1,9 +1,10 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QLabel, QPushButton, QFileDialog, QSizePolicy, QComboBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QColorDialog,
-                             QMessageBox, QDoubleSpinBox, QDialog, QCheckBox, QMenu, QWidget as QWidget2)
+                             QMessageBox, QDoubleSpinBox, QDialog, QCheckBox, QMenu, QWidget as QWidget2,
+                             QSplitter)
 from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QCloseEvent
 from urllib.parse import quote, unquote
 import html
@@ -33,7 +34,9 @@ class SquareLabel(QLabel):
         self.setText("No Image Loaded")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet("border: 1px solid #ccc; background-color: #f0f0f0;")
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        size_policy = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        size_policy.setHeightForWidth(True)
+        self.setSizePolicy(size_policy)
         self.setMouseTracking(True) # Enable mouse tracking for hover effects
 
         # Line positions
@@ -276,6 +279,57 @@ class SquareLabel(QLabel):
         elif self.text() == "":
              self.setText("No Image Loaded")
 
+
+class SquareImageContainer(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.image_label = SquareLabel(self)
+
+    def resizeEvent(self, event):
+        side = max(0, min(self.width(), self.height()))
+        x = (self.width() - side) // 2
+        y = (self.height() - side) // 2
+        self.image_label.setGeometry(x, y, side, side)
+        super().resizeEvent(event)
+
+
+class PlateSlotsWidget(QWidget):
+    def __init__(self, slot_count, parent=None):
+        super().__init__(parent)
+        self.slot_count = max(1, slot_count)
+        self.slots_layout = QHBoxLayout()
+        self.slots_layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(self.slots_layout)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        margins = self.slots_layout.contentsMargins()
+        spacing = self.slots_layout.spacing()
+        available_width = max(
+            0,
+            width - margins.left() - margins.right() - spacing * (self.slot_count - 1),
+        )
+        slot_width = max(0, available_width // self.slot_count)
+
+        slot_heights = []
+        for i in range(self.slots_layout.count()):
+            widget = self.slots_layout.itemAt(i).widget()
+            if widget is None:
+                continue
+            if widget.hasHeightForWidth():
+                slot_heights.append(widget.heightForWidth(slot_width))
+            else:
+                slot_heights.append(widget.sizeHint().height())
+
+        return margins.top() + margins.bottom() + max(slot_heights, default=0)
+
+    def sizeHint(self):
+        return QSize(600, self.heightForWidth(600))
+
+
 class ImageSlot(QWidget):
     # Signal emitted when the per-plate range changes
     rangeChanged = pyqtSignal(int, float)  # (plate_index, range_value)
@@ -284,6 +338,7 @@ class ImageSlot(QWidget):
         super().__init__()
         self.plate_index = plate_index
         self.image_path = None # Store loaded image path
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.layout = QVBoxLayout()
         self.layout.setSpacing(2)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -316,8 +371,9 @@ class ImageSlot(QWidget):
         self.layout.addLayout(title_layout)
         
         # Image Area
-        self.image_label = SquareLabel()
-        self.layout.addWidget(self.image_label)
+        self.image_container = SquareImageContainer()
+        self.image_label = self.image_container.image_label
+        self.layout.addWidget(self.image_container, 1)
         
         # Controls
         controls_layout = QHBoxLayout()
@@ -333,6 +389,27 @@ class ImageSlot(QWidget):
         self.export_button = QPushButton("Export Image")
         self.export_button.clicked.connect(self.export_marked_image)
         controls_layout.addWidget(self.export_button)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        margins = self.layout.contentsMargins()
+        spacing = self.layout.spacing()
+        title_height = max(self.title_label.sizeHint().height(), self.range_spin.sizeHint().height())
+        controls_height = max(self.load_button.sizeHint().height(), self.export_button.sizeHint().height())
+        image_height = self.image_label.heightForWidth(width)
+        return (
+            margins.top()
+            + margins.bottom()
+            + title_height
+            + controls_height
+            + image_height
+            + spacing * 2
+        )
+
+    def sizeHint(self):
+        return QSize(220, self.heightForWidth(220))
 
     def _on_range_changed(self, value):
         """Emit signal when the per-plate range changes (normalized 0.0-1.0)."""
@@ -719,12 +796,16 @@ class MainWindow(QMainWindow):
             icon_column.addStretch()  # Push content to top
             toolbar_hlayout.addLayout(icon_column)
 
-        main_layout.addLayout(toolbar_hlayout)
+        main_layout.addLayout(toolbar_hlayout, 0)
 
-        # Slots Area
-        slots_layout = QHBoxLayout()
+        # Vertical splitter: plates on top, results table on bottom
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # Slots Area – wrap in a container widget for the splitter
         self.slots = []
         self.plate_labels = ['A', "B'", 'C']
+        slots_widget = PlateSlotsWidget(len(self.plate_labels))
+        slots_layout = slots_widget.slots_layout
         for plate_idx, label in enumerate(self.plate_labels):
             slot = ImageSlot(label, plate_idx)
             # Connect spot changes to aggregation logic
@@ -735,7 +816,7 @@ class MainWindow(QMainWindow):
             slot.rangeChanged.connect(self.on_plate_range_changed)
             self.slots.append(slot)
             slots_layout.addWidget(slot)
-        main_layout.addLayout(slots_layout)
+        self.main_splitter.addWidget(slots_widget)
         
         # Results Display
         # Results Display using QTableWidget
@@ -780,9 +861,37 @@ class MainWindow(QMainWindow):
         # Connect Cell Click
         self.results_table.cellClicked.connect(self.handle_table_click)
         
-        main_layout.addWidget(self.results_table)
+        self.main_splitter.addWidget(self.results_table)
+
+        # Keep the plate area at its natural height; extra window height goes to the table.
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setChildrenCollapsible(False)
+
+        main_layout.addWidget(self.main_splitter, 1)
+        main_layout.setStretch(0, 0)
+        main_layout.setStretch(1, 1)
 
         self.create_menu()
+        QTimer.singleShot(0, self.initialize_main_splitter_sizes)
+
+    def initialize_main_splitter_sizes(self):
+        slots_widget = self.main_splitter.widget(0)
+        total_height = self.main_splitter.size().height()
+        if slots_widget is None or total_height <= 0:
+            return
+
+        if slots_widget.hasHeightForWidth():
+            preferred_top_height = slots_widget.heightForWidth(slots_widget.width())
+        else:
+            preferred_top_height = slots_widget.sizeHint().height()
+
+        handle_height = self.main_splitter.handleWidth()
+        minimum_bottom_height = 80
+        available_top_height = max(0, total_height - handle_height - minimum_bottom_height)
+        top_height = max(0, min(preferred_top_height, available_top_height))
+        bottom_height = max(minimum_bottom_height, total_height - top_height - handle_height)
+        self.main_splitter.setSizes([top_height, bottom_height])
 
     def handle_table_click(self, row, col):
         if col == self.RESULTS_COL_COLOR:
