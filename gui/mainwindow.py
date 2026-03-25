@@ -68,6 +68,23 @@ def _make_custom_line_pen(orientation, width):
     return pen
 
 
+def _serialize_qcolor(color):
+    if isinstance(color, QColor) and color.isValid():
+        return color.name(QColor.NameFormat.HexArgb)
+    return None
+
+
+def _deserialize_qcolor(value):
+    color = QColor()
+    if isinstance(value, str):
+        color = QColor(value)
+    elif isinstance(value, (tuple, list)) and len(value) >= 3:
+        color = QColor(int(value[0]), int(value[1]), int(value[2]))
+    elif isinstance(value, QColor):
+        color = QColor(value)
+    return color if color.isValid() else None
+
+
 class SortableTableWidgetItem(QTableWidgetItem):
     """QTableWidgetItem that sorts by a stored underlying value when available."""
 
@@ -3017,9 +3034,10 @@ class MainWindow(QMainWindow):
             "plates": []
         }
 
-        # Save Samples (only need ID and name, color can be deterministic)
+        # Save sample metadata, including explicit colors so custom spot colors persist.
         for sid, sdata in self.samples.items():
             sample_data = {
+                "color": _serialize_qcolor(sdata.get("color")),
                 "name": sdata["name"],
                 "assigned_name": sdata.get('assigned_name'),
                 "show_on_plate": sdata.get('show_on_plate', False),
@@ -3127,19 +3145,21 @@ class MainWindow(QMainWindow):
                 sid = int(sid_str)
                 if sid > max_sid:
                     max_sid = sid
-                # Assign correct colors for reference standards vs substances
-                if sid == 0:
-                    color = QColor("red")       # Atranorin reference
-                elif sid == -1:
-                    color = QColor("gold")    # Norstictic Acid reference
-                elif sid == -2:
-                    color = QColor("orange")    # Rhizocarpic Acid reference
-                elif sid == -3:
-                    color = QColor("limegreen")      # Lecanoric Acid reference
-                elif sid == -4:
-                    color = QColor("magenta")   # Evernic Acid reference
-                else:
-                    color = self.colors[(sid - 1) % len(self.colors)]
+                color = _deserialize_qcolor(sdata.get("color"))
+                if color is None:
+                    # Backward compatibility: older analysis files relied on deterministic colors.
+                    if sid == 0:
+                        color = QColor("red")       # Atranorin reference
+                    elif sid == -1:
+                        color = QColor("gold")    # Norstictic Acid reference
+                    elif sid == -2:
+                        color = QColor("orange")    # Rhizocarpic Acid reference
+                    elif sid == -3:
+                        color = QColor("limegreen")      # Lecanoric Acid reference
+                    elif sid == -4:
+                        color = QColor("magenta")   # Evernic Acid reference
+                    else:
+                        color = self.colors[(sid - 1) % len(self.colors)]
                 self.samples[sid] = {
                     'color': color,
                     'name': sdata['name'],
