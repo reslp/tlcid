@@ -117,6 +117,7 @@ class SquareLabel(QLabel):
         self.show_support_lines = False
         self.support_line_y_mapper = None
         self.support_line_specs_provider = None
+        self.custom_line_rf_label_provider = None
         self.custom_lines = []  # list of {'orientation': 'horizontal'|'vertical', 'position': float}
         self.dragged_custom_line_index = None
 
@@ -365,6 +366,21 @@ class SquareLabel(QLabel):
             for rf_tenths in range(10, 81, 10)
         ]
 
+    def get_custom_line_annotations(self):
+        annotations = []
+        for line in self.custom_lines:
+            position = float(line.get("position", 0.5))
+            orientation = line.get("orientation")
+            label = None
+            if orientation == "horizontal" and self.custom_line_rf_label_provider is not None:
+                label = self.custom_line_rf_label_provider(position)
+            annotations.append({
+                "orientation": orientation,
+                "position": position,
+                "label": label,
+            })
+        return annotations
+
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
@@ -390,13 +406,22 @@ class SquareLabel(QLabel):
                     painter.drawLine(0, y, self.width(), y)
                     painter.drawText(4, y - 4, str(label))
 
-            for line in self.custom_lines:
-                position = float(line.get("position", 0.5))
-                orientation = line.get("orientation")
+            for line in self.get_custom_line_annotations():
+                position = line["position"]
+                orientation = line["orientation"]
                 painter.setPen(_make_custom_line_pen(orientation, CUSTOM_LINE_BASE_WIDTH))
                 if orientation == "horizontal":
                     y = int(position * self.height())
                     painter.drawLine(0, y, self.width(), y)
+                    label = line.get("label")
+                    if label:
+                        font = painter.font()
+                        font.setPointSize(max(8, font.pointSize()))
+                        painter.setFont(font)
+                        metrics = painter.fontMetrics()
+                        text_x = max(6, self.width() - metrics.horizontalAdvance(label) - 6)
+                        text_y = max(metrics.ascent() + 2, y - 4)
+                        painter.drawText(text_x, text_y, label)
                 elif orientation == "vertical":
                     x = int(position * self.width())
                     painter.drawLine(x, 0, x, self.height())
@@ -749,13 +774,22 @@ class ImageSlot(QWidget):
                 painter.drawLine(0, support_y, img_w, support_y)
                 painter.drawText(int(6 * scale_factor), support_y - int(4 * scale_factor), str(label))
 
-        for line in self.image_label.custom_lines:
-            position = float(line.get("position", 0.5))
-            orientation = line.get("orientation")
+        for line in self.image_label.get_custom_line_annotations():
+            position = line["position"]
+            orientation = line["orientation"]
             painter.setPen(_make_custom_line_pen(orientation, max(1.0, CUSTOM_LINE_BASE_WIDTH * scale_factor)))
             if orientation == "horizontal":
                 custom_y = widget_norm_to_image_px(position, is_y=True)
                 painter.drawLine(0, custom_y, img_w, custom_y)
+                label = line.get("label")
+                if label:
+                    font = painter.font()
+                    font.setPointSize(max(8, int(10 * scale_factor)))
+                    painter.setFont(font)
+                    metrics = painter.fontMetrics()
+                    text_x = max(int(6 * scale_factor), img_w - metrics.horizontalAdvance(label) - int(6 * scale_factor))
+                    text_y = max(metrics.ascent() + int(2 * scale_factor), custom_y - int(4 * scale_factor))
+                    painter.drawText(text_x, text_y, label)
             elif orientation == "vertical":
                 custom_x = widget_norm_to_image_px(position, is_y=False)
                 painter.drawLine(custom_x, 0, custom_x, img_h)
@@ -2252,6 +2286,11 @@ class MainWindow(QMainWindow):
         raw_rf = self._support_line_raw_rf(corrected_rf, standards)
         return slot.image_label.start_line_y + (raw_rf * (slot.image_label.front_line_y - slot.image_label.start_line_y))
 
+    def _custom_line_rf_label(self, slot, raw_y, standards):
+        raw_rf = self._raw_rf_from_slot_y(slot, raw_y)
+        corrected_rf = self._correct_plate_rf(raw_rf, standards)
+        return self.format_rf_value(corrected_rf)
+
     def _rf_class_support_line_specs(self, slot, atranorin_y, norstictic_y):
         anchor_points = [
             (1.0, slot.image_label.start_line_y),
@@ -2293,6 +2332,9 @@ class MainWindow(QMainWindow):
                 )
             else:
                 slot.image_label.support_line_y_mapper = None
+            slot.image_label.custom_line_rf_label_provider = (
+                lambda raw_y, slot=slot, standards=standards: self._custom_line_rf_label(slot, raw_y, standards)
+            )
 
             slot.image_label.support_line_specs_provider = None
             if self.display_rf_classes and slot.image_label.show_support_lines:
@@ -2305,7 +2347,7 @@ class MainWindow(QMainWindow):
                 else:
                     missing_rf_class_requirements = True
 
-            if slot.image_label.show_support_lines:
+            if slot.image_label.show_lines:
                 slot.image_label.update()
 
         if self.display_rf_classes and missing_rf_class_requirements:
