@@ -663,14 +663,15 @@ class MainWindow(QMainWindow):
         
         # Left column: toolbar controls in three rows
         toolbar_left_col = QVBoxLayout()
-        toolbar_left_col.setSpacing(5)
+        toolbar_left_col.setSpacing(0)
 
         # Row 1: Label for Reference Substances
         row1_layout = QHBoxLayout()
-        row1_layout.setSpacing(5)
+        row1_layout.setContentsMargins(0, 0, 0, 0)
+        row1_layout.setSpacing(0)
         
         self.reference_substances_label = QLabel()
-        self.reference_substances_label.setStyleSheet("color: gray; padding-left: 10px;")
+        self.reference_substances_label.setStyleSheet("color: gray; padding: 0px; margin: 0px;")
         self.reference_substances_label.setText("<b>Mark known substances as references:</b>")
         row1_layout.addWidget(self.reference_substances_label)
         row1_layout.addStretch()
@@ -679,6 +680,8 @@ class MainWindow(QMainWindow):
         # Row 2: All buttons for marking reference substances
         row2_layout = QHBoxLayout()
         row2_layout.setSpacing(5)
+        row2_layout.setContentsMargins(0, 0, 0, 0)
+
         
         self.mark_atranorin_button = QPushButton("Atranorin")
         self.mark_atranorin_button.setCheckable(True)
@@ -710,10 +713,11 @@ class MainWindow(QMainWindow):
 
         # Row 5: Label for Reference Substances
         row3_layout = QHBoxLayout()
-        row3_layout.setSpacing(5)
+        row3_layout.setSpacing(0)
+        row3_layout.setContentsMargins(0, 0, 0, 0)
         
         self.reference_substances_label = QLabel()
-        self.reference_substances_label.setStyleSheet("color: gray; padding-left: 10px;")
+        self.reference_substances_label.setStyleSheet("color: gray; padding: 0px; margin: 0px;")
         self.reference_substances_label.setText("<b>Mark unknown substances:</b>")
         row3_layout.addWidget(self.reference_substances_label)
         row3_layout.addStretch()
@@ -721,37 +725,32 @@ class MainWindow(QMainWindow):
         
         # Row 4: "Mark Substance" button
         row4_layout = QHBoxLayout()
-        row4_layout.setSpacing(5)
+        row4_layout.setSpacing(0)
+        row4_layout.setContentsMargins(0, 0, 0, 0)
         
         self.mark_substance_button = QPushButton("New Substance")
         self.mark_substance_button.setCheckable(True)
         self.mark_substance_button.clicked.connect(self.toggle_mark_substance)
         row4_layout.addWidget(self.mark_substance_button)
-        
-        row4_layout.addStretch()
-        toolbar_left_col.addLayout(row4_layout)
-        
-        # Row 5: Label with Method and Calibration settings dropdown menu
-        row5_layout = QHBoxLayout()
-        row5_layout.setSpacing(5)
 
-        
-        # Detection Status Label
-        self.detection_status_label = QLabel()
-        self.detection_status_label.setStyleSheet("color: gray; padding-left: 10px;")
-        row5_layout.addWidget(self.detection_status_label)
-
-        # Calibration Setting Dropdown
         calibration_label = QLabel("Calibration setting:")
         calibration_label.setStyleSheet("padding-left: 15px;")
-        row5_layout.addWidget(calibration_label)
+        row4_layout.addWidget(calibration_label)
 
         self.calibration_combo = QComboBox()
         self.calibration_combo.addItem("Linear interpolation")
         self.calibration_combo.addItem("Nearest reference")
         self.calibration_combo.setToolTip("Linear interpolation: uses standard Rf values as anchor points for Rf correction.\nNearest reference: corrects Rf based on the single closest reference substance.")
         self.calibration_combo.currentTextChanged.connect(self.on_calibration_mode_changed)
-        row5_layout.addWidget(self.calibration_combo)
+        row4_layout.addWidget(self.calibration_combo)
+        
+        row4_layout.addStretch()
+        toolbar_left_col.addLayout(row4_layout)
+        
+        # Row 5: Additional inline controls
+        row5_layout = QHBoxLayout()
+        row5_layout.setSpacing(0)
+        row5_layout.setContentsMargins(0, 0, 0, 0)
 
         # Inline Range control in Main Window
         self.range_main = QDoubleSpinBox()
@@ -1841,13 +1840,8 @@ class MainWindow(QMainWindow):
         self.update_results_display()
 
     def update_detection_status_label(self):
-        is_range = (self.detection_method == "Range")
-        text = f"Method: <b>{self.detection_method}</b>"
-        if is_range:
-            text += " (per-plate ranges active)"
-        self.detection_status_label.setText(text)
-        # Show/hide the inline range spinbox based on detection method
-        # Note: Per-plate ranges are now set individually via spinboxes in ImageSlot
+        # Keep the legacy helper as the central place for synchronizing
+        # inline detection-related controls.
         if hasattr(self, 'range_main'):
             self.range_main.setVisible(False)  # Hide global range, use per-plate instead
             # Sync spinbox value without triggering valueChanged
