@@ -60,6 +60,7 @@ class SquareLabel(QLabel):
         self.dragged_line = None # "Start" or "Front"
         self.show_support_lines = False
         self.support_line_y_mapper = None
+        self.support_line_specs_provider = None
 
     def set_global_colors(self, colors):
         self.global_colors = colors
@@ -226,6 +227,16 @@ class SquareLabel(QLabel):
                 return mapped_y
         return self.start_line_y + (rf_value * (self.front_line_y - self.start_line_y))
 
+    def get_support_line_specs(self):
+        if self.support_line_specs_provider is not None:
+            specs = self.support_line_specs_provider()
+            if specs:
+                return specs
+        return [
+            (self.rf_to_widget_y(rf_tenths / 100.0), str(rf_tenths))
+            for rf_tenths in range(10, 81, 10)
+        ]
+
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
@@ -246,11 +257,10 @@ class SquareLabel(QLabel):
                 font = painter.font()
                 font.setPointSize(max(8, font.pointSize()))
                 painter.setFont(font)
-                for idx, rf_tenths in enumerate(range(10, 81, 10), start=1):
-                    y = int(self.rf_to_widget_y(rf_tenths / 100.0) * self.height())
-                    pos = idx*10 # for displaying Rf value above line
+                for y_norm, label in self.get_support_line_specs():
+                    y = int(y_norm * self.height())
                     painter.drawLine(0, y, self.width(), y)
-                    painter.drawText(4, y - 4, str(pos))
+                    painter.drawText(4, y - 4, str(label))
 
         # Draw Spots (unconditional)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -474,7 +484,11 @@ class ImageSlot(QWidget):
 
     def _on_support_lines_toggled(self, checked):
         self.image_label.show_support_lines = checked
-        self.image_label.update()
+        main_window = self.window()
+        if hasattr(main_window, 'update_results_display'):
+            main_window.update_results_display()
+        else:
+            self.image_label.update()
 
     def load_image(self):
         file_name, _ = QFileDialog.getOpenFileName(
@@ -559,10 +573,10 @@ class ImageSlot(QWidget):
             font = painter.font()
             font.setPointSize(max(8, int(10 * scale_factor)))
             painter.setFont(font)
-            for idx, rf_tenths in enumerate(range(10, 81, 10), start=1):
-                support_y = widget_norm_to_image_px(self.image_label.rf_to_widget_y(rf_tenths / 100.0), is_y=True)
+            for y_norm, label in self.image_label.get_support_line_specs():
+                support_y = widget_norm_to_image_px(y_norm, is_y=True)
                 painter.drawLine(0, support_y, img_w, support_y)
-                painter.drawText(int(6 * scale_factor), support_y - int(4 * scale_factor), str(idx))
+                painter.drawText(int(6 * scale_factor), support_y - int(4 * scale_factor), str(label))
 
         # Draw Spots
         spots = self.image_label.spots
@@ -684,6 +698,8 @@ class MainWindow(QMainWindow):
         self.detection_range = 0.05  # Global default (used as initial value for plates)
         self.relative_rf_display = True
         self.allow_missing_rf_values = False
+        self.display_rf_classes = False
+        self._rf_classes_missing_popup_shown = False
 
         # Per-plate range settings: {plate_index: range_value}
         self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
@@ -1654,6 +1670,7 @@ class MainWindow(QMainWindow):
             self.detection_range,
             self.relative_rf_display,
             self.allow_missing_rf_values,
+            self.display_rf_classes,
         )
         self.settings_window.show()
         self.settings_window.raise_()
@@ -1825,11 +1842,14 @@ class MainWindow(QMainWindow):
             return f"{value * 100:.0f}"
         return f"{value:.2f}"
 
-    def update_detection_settings(self, method, range_val, relative_rf=True, allow_missing_rf_values=False):
+    def update_detection_settings(self, method, range_val, relative_rf=True, allow_missing_rf_values=False, display_rf_classes=False):
         self.detection_method = method
         self.detection_range = range_val
         self.relative_rf_display = relative_rf
         self.allow_missing_rf_values = allow_missing_rf_values
+        self.display_rf_classes = display_rf_classes
+        if not display_rf_classes:
+            self._rf_classes_missing_popup_shown = False
         for slot in self.slots:
             slot.set_relative_rf_display(relative_rf)
         self.update_detection_status_label()
@@ -1841,6 +1861,7 @@ class MainWindow(QMainWindow):
                 range_val,
                 relative_rf,
                 allow_missing_rf_values,
+                display_rf_classes,
             )
 
         self.update_results_display()
@@ -2049,7 +2070,39 @@ class MainWindow(QMainWindow):
         raw_rf = self._support_line_raw_rf(corrected_rf, standards)
         return slot.image_label.start_line_y + (raw_rf * (slot.image_label.front_line_y - slot.image_label.start_line_y))
 
-    def _apply_support_line_mapping(self, active_standards):
+    def _rf_class_support_line_specs(self, slot, atranorin_y, norstictic_y):
+        anchor_points = [
+            (1.0, slot.image_label.start_line_y),
+            (4.0, norstictic_y),
+            (7.0, atranorin_y),
+            (8.0, slot.image_label.front_line_y),
+        ]
+        specs = []
+        for class_idx in range(1, 9):
+            y_norm = slot.image_label.start_line_y
+            for (x1, y1), (x2, y2) in zip(anchor_points, anchor_points[1:]):
+                if x1 <= class_idx <= x2:
+                    if abs(x2 - x1) > 1e-7:
+                        y_norm = y1 + ((class_idx - x1) * (y2 - y1) / (x2 - x1))
+                    else:
+                        y_norm = y1
+                    break
+            specs.append((y_norm, str(class_idx)))
+        return specs
+
+    def _show_rf_classes_missing_popup(self):
+        if self._rf_classes_missing_popup_shown:
+            return
+        self._rf_classes_missing_popup_shown = True
+        QMessageBox.information(
+            self,
+            "Rf classes unavailable",
+            "Display Rf classes requires Atranorin and Norstictic Acid to be marked as references on the plate(s). Falling back to the normal support-line display until both references are available.",
+        )
+
+    def _apply_support_line_mapping(self, active_standards, rf_class_reference_positions=None):
+        rf_class_reference_positions = rf_class_reference_positions or {}
+        missing_rf_class_requirements = False
         for plate_idx, slot in enumerate(self.slots):
             standards = list(active_standards.get(plate_idx, []))
             if standards:
@@ -2058,8 +2111,25 @@ class MainWindow(QMainWindow):
                 )
             else:
                 slot.image_label.support_line_y_mapper = None
+
+            slot.image_label.support_line_specs_provider = None
+            if self.display_rf_classes and slot.image_label.show_support_lines:
+                refs = rf_class_reference_positions.get(plate_idx)
+                if refs is not None:
+                    atranorin_y, norstictic_y = refs
+                    slot.image_label.support_line_specs_provider = (
+                        lambda slot=slot, atranorin_y=atranorin_y, norstictic_y=norstictic_y: self._rf_class_support_line_specs(slot, atranorin_y, norstictic_y)
+                    )
+                else:
+                    missing_rf_class_requirements = True
+
             if slot.image_label.show_support_lines:
                 slot.image_label.update()
+
+        if self.display_rf_classes and missing_rf_class_requirements:
+            self._show_rf_classes_missing_popup()
+        elif not missing_rf_class_requirements:
+            self._rf_classes_missing_popup_shown = False
 
     def update_results_display(self):
         import sys
@@ -2222,7 +2292,15 @@ class MainWindow(QMainWindow):
         for idx in active_standards:
             active_standards[idx].sort(key=lambda x: x[0])
 
-        self._apply_support_line_mapping(active_standards)
+        rf_class_reference_positions = {}
+        if self.samples.get(0, {}).get('is_reference', False) and self.samples.get(-1, {}).get('is_reference', False):
+            for plate_idx, slot in enumerate(self.slots):
+                atranorin_spot = next((spot for spot in slot.image_label.spots if spot['sample_id'] == 0), None)
+                norstictic_spot = next((spot for spot in slot.image_label.spots if spot['sample_id'] == -1), None)
+                if atranorin_spot is not None and norstictic_spot is not None:
+                    rf_class_reference_positions[plate_idx] = (atranorin_spot['y'], norstictic_spot['y'])
+
+        self._apply_support_line_mapping(active_standards, rf_class_reference_positions)
 
         # Debug output: Show which reference substances are used for each plate
         _safe_print("=" * 80)
@@ -2709,6 +2787,7 @@ class MainWindow(QMainWindow):
             "detection_range": self.detection_range,
             "relative_rf_display": self.relative_rf_display,
             "allow_missing_rf_values": self.allow_missing_rf_values,
+            "display_rf_classes": self.display_rf_classes,
             "plate_ranges": self.plate_ranges,
             "calibration_mode": self.calibration_mode,
             "samples": {},
@@ -2783,6 +2862,8 @@ class MainWindow(QMainWindow):
                  self.relative_rf_display = bool(data["relative_rf_display"])
             if "allow_missing_rf_values" in data:
                  self.allow_missing_rf_values = bool(data["allow_missing_rf_values"])
+            if "display_rf_classes" in data:
+                 self.display_rf_classes = bool(data["display_rf_classes"])
             if "plate_ranges" in data:
                  self.plate_ranges = {int(k): v for k, v in data["plate_ranges"].items()}
             if "calibration_mode" in data:
@@ -3003,6 +3084,8 @@ class MainWindow(QMainWindow):
 
         # Reset per-plate ranges to default
         self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
+        self.display_rf_classes = False
+        self._rf_classes_missing_popup_shown = False
         for i, slot in enumerate(self.slots):
             slot.set_range(0.05)
 
@@ -3067,6 +3150,8 @@ class MainWindow(QMainWindow):
             slot.image_label.front_line_y = 0.1
             slot.image_label.show_lines = False
             slot.image_label.show_support_lines = False
+            slot.image_label.support_line_y_mapper = None
+            slot.image_label.support_line_specs_provider = None
             slot.support_lines_checkbox.blockSignals(True)
             slot.support_lines_checkbox.setChecked(False)
             slot.support_lines_checkbox.blockSignals(False)
