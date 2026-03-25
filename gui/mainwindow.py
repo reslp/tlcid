@@ -14,6 +14,9 @@ from gui.report_generator import PDFReportGenerator
 
 
 ICON_DIR = Path(__file__).resolve().parent / "icons"
+CUSTOM_HORIZONTAL_LINE_COLOR = "#0065C1"
+CUSTOM_VERTICAL_LINE_COLOR = "#990000"
+CUSTOM_LINE_BASE_WIDTH = 1.5
 
 
 def _make_icon_button(icon_filename, tooltip_text, fallback_text):
@@ -33,12 +36,12 @@ def _make_icon_button(icon_filename, tooltip_text, fallback_text):
         button.setIcon(icon)
         button.setText("")
         button.setFixedSize(40, 40)
-        button.setIconSize(QSize(32, 32))
+        button.setIconSize(QSize(38, 38))
         button.setStyleSheet("""
             QPushButton {
                 border: none;
                 background: transparent;
-                border-radius: 7px;
+                border-radius: 5px;
                 padding: 2px;
             }
             QPushButton:hover {
@@ -49,6 +52,20 @@ def _make_icon_button(icon_filename, tooltip_text, fallback_text):
             }
         """)
     return button
+
+
+def _make_custom_line_pen(orientation, width):
+    if orientation == "horizontal":
+        color = QColor(CUSTOM_HORIZONTAL_LINE_COLOR)
+    elif orientation == "vertical":
+        color = QColor(CUSTOM_VERTICAL_LINE_COLOR)
+    else:
+        raise ValueError(f"Unsupported line orientation: {orientation}")
+
+    pen = QPen(color)
+    pen.setWidthF(width)
+    pen.setStyle(Qt.PenStyle.DashLine)
+    return pen
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
@@ -100,6 +117,8 @@ class SquareLabel(QLabel):
         self.show_support_lines = False
         self.support_line_y_mapper = None
         self.support_line_specs_provider = None
+        self.custom_lines = []  # list of {'orientation': 'horizontal'|'vertical', 'position': float}
+        self.dragged_custom_line_index = None
 
     def set_global_colors(self, colors):
         self.global_colors = colors
@@ -130,6 +149,43 @@ class SquareLabel(QLabel):
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
+    def add_custom_line(self, orientation):
+        if orientation not in {"horizontal", "vertical"}:
+            raise ValueError(f"Unsupported line orientation: {orientation}")
+        self.custom_lines.append({
+            "orientation": orientation,
+            "position": 0.5,
+        })
+        self.update()
+
+    def _find_custom_line_index(self, click_x, click_y):
+        if not self.show_lines:
+            return None
+
+        hit_threshold = 8
+        closest_index = None
+        closest_distance = float('inf')
+
+        for idx, line in enumerate(self.custom_lines):
+            position = float(line.get("position", 0.5))
+            if line.get("orientation") == "horizontal":
+                distance = abs(click_y - (position * self.height()))
+            elif line.get("orientation") == "vertical":
+                distance = abs(click_x - (position * self.width()))
+            else:
+                continue
+
+            if distance <= hit_threshold and distance < closest_distance:
+                closest_distance = distance
+                closest_index = idx
+
+        return closest_index
+
+    def _custom_line_cursor(self, line):
+        if line.get("orientation") == "vertical":
+            return Qt.CursorShape.SplitHCursor
+        return Qt.CursorShape.SplitVCursor
+
     def set_image(self, pixmap):
         self._original_pixmap = pixmap
         self.show_lines = True
@@ -148,17 +204,34 @@ class SquareLabel(QLabel):
         y_norm = max(0.0, min(1.0, y_norm))
 
         # Cursor feedback for lines (only when show_lines is True)
-        if self.show_lines and not self.adding_sample_mode and self.dragged_spot_index is None and self.dragged_line is None:
-            start_px = self.start_line_y * self.height()
-            front_px = self.front_line_y * self.height()
-            click_y = event.position().y()
+        if (
+            not self.adding_sample_mode
+            and self.dragged_spot_index is None
+            and self.dragged_line is None
+            and self.dragged_custom_line_index is None
+        ):
+            custom_line_index = self._find_custom_line_index(event.position().x(), event.position().y())
+            if custom_line_index is not None:
+                self.setCursor(self._custom_line_cursor(self.custom_lines[custom_line_index]))
+            elif self.show_lines:
+                start_px = self.start_line_y * self.height()
+                front_px = self.front_line_y * self.height()
+                click_y = event.position().y()
 
-            if abs(click_y - start_px) < 10 or abs(click_y - front_px) < 10:
-                self.setCursor(Qt.CursorShape.SplitVCursor)
+                if abs(click_y - start_px) < 10 or abs(click_y - front_px) < 10:
+                    self.setCursor(Qt.CursorShape.SplitVCursor)
+                else:
+                    self.setCursor(Qt.CursorShape.ArrowCursor)
+
+        if self.dragged_custom_line_index is not None:
+            line = self.custom_lines[self.dragged_custom_line_index]
+            if line.get("orientation") == "horizontal":
+                line["position"] = y_norm
             else:
-                self.setCursor(Qt.CursorShape.ArrowCursor)
+                line["position"] = x_norm
+            self.update()
 
-        if self.dragged_spot_index is not None:
+        elif self.dragged_spot_index is not None:
             self.spots[self.dragged_spot_index]['x'] = x_norm
             self.spots[self.dragged_spot_index]['y'] = y_norm
             self.update()
@@ -189,10 +262,18 @@ class SquareLabel(QLabel):
                     self.update()
                     self.spotsChanged.emit(self.spots)
                     return
+
+            custom_line_index = self._find_custom_line_index(click_x, click_y)
+            if custom_line_index is not None:
+                self.custom_lines.pop(custom_line_index)
+                self.update()
+                return
             return
 
         x_norm = event.position().x() / self.width()
         y_norm = event.position().y() / self.height()
+        x_norm = max(0.0, min(1.0, x_norm))
+        y_norm = max(0.0, min(1.0, y_norm))
 
         if self.adding_sample_mode:
             if self.current_sample_id is not None:
@@ -239,8 +320,15 @@ class SquareLabel(QLabel):
 
             if clicked_idx is not None:
                 self.dragged_spot_index = clicked_idx
-            elif self.show_lines:
-                # 2. Line Hit (only when show_lines is True)
+            else:
+                custom_line_index = self._find_custom_line_index(click_x, click_y)
+                if custom_line_index is not None:
+                    self.dragged_custom_line_index = custom_line_index
+                    self.setCursor(self._custom_line_cursor(self.custom_lines[custom_line_index]))
+                    return
+
+            if clicked_idx is None and self.show_lines:
+                # 2. Calibration Line Hit (only when show_lines is True)
                 start_px = self.start_line_y * self.height()
                 front_px = self.front_line_y * self.height()
 
@@ -256,6 +344,7 @@ class SquareLabel(QLabel):
     def mouseReleaseEvent(self, event):
         self.dragged_spot_index = None
         self.dragged_line = None
+        self.dragged_custom_line_index = None
         if not self.adding_sample_mode:
              self.setCursor(Qt.CursorShape.ArrowCursor)
 
@@ -300,6 +389,17 @@ class SquareLabel(QLabel):
                     y = int(y_norm * self.height())
                     painter.drawLine(0, y, self.width(), y)
                     painter.drawText(4, y - 4, str(label))
+
+            for line in self.custom_lines:
+                position = float(line.get("position", 0.5))
+                orientation = line.get("orientation")
+                painter.setPen(_make_custom_line_pen(orientation, CUSTOM_LINE_BASE_WIDTH))
+                if orientation == "horizontal":
+                    y = int(position * self.height())
+                    painter.drawLine(0, y, self.width(), y)
+                elif orientation == "vertical":
+                    x = int(position * self.width())
+                    painter.drawLine(x, 0, x, self.height())
 
         # Draw Spots (unconditional)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -460,10 +560,20 @@ class ImageSlot(QWidget):
         self.export_button.clicked.connect(self.export_marked_image)
         controls_layout.addWidget(self.export_button)
 
+        self.horizontal_line_button = _make_icon_button("horizontal_line.svg", "Add Horizontal Line", "Add H Line")
+        self.horizontal_line_button.clicked.connect(self.add_horizontal_line)
+        controls_layout.addWidget(self.horizontal_line_button)
+
+        self.vertical_line_button = _make_icon_button("vertical_line.svg", "Add Vertical Line", "Add V Line")
+        self.vertical_line_button.clicked.connect(self.add_vertical_line)
+        controls_layout.addWidget(self.vertical_line_button)
+
         self.support_lines_checkbox = QCheckBox("Support Lines")
         self.support_lines_checkbox.setChecked(False)
         self.support_lines_checkbox.toggled.connect(self._on_support_lines_toggled)
         controls_layout.addWidget(self.support_lines_checkbox)
+
+        self.set_custom_line_controls_enabled(False)
 
     def hasHeightForWidth(self):
         return True
@@ -472,7 +582,13 @@ class ImageSlot(QWidget):
         margins = self.layout.contentsMargins()
         spacing = self.layout.spacing()
         title_height = max(self.title_label.sizeHint().height(), self.range_spin.sizeHint().height())
-        controls_height = max(self.load_button.sizeHint().height(), self.export_button.sizeHint().height())
+        controls_height = max(
+            self.load_button.sizeHint().height(),
+            self.export_button.sizeHint().height(),
+            self.horizontal_line_button.sizeHint().height(),
+            self.vertical_line_button.sizeHint().height(),
+            self.support_lines_checkbox.sizeHint().height(),
+        )
         image_height = self.image_label.heightForWidth(width)
         return (
             margins.top()
@@ -529,20 +645,36 @@ class ImageSlot(QWidget):
         else:
             self.image_label.update()
 
+    def set_custom_line_controls_enabled(self, enabled):
+        self.export_button.setEnabled(enabled)
+        self.horizontal_line_button.setEnabled(enabled)
+        self.vertical_line_button.setEnabled(enabled)
+
+    def set_loaded_image(self, pixmap, image_path=None):
+        if image_path is not None:
+            self.image_path = image_path
+        self.image_label.set_image(pixmap)
+        self.set_custom_line_controls_enabled(True)
+
+    def add_horizontal_line(self):
+        self.image_label.add_custom_line("horizontal")
+
+    def add_vertical_line(self):
+        self.image_label.add_custom_line("vertical")
+
     def load_image(self):
         file_name, _ = QFileDialog.getOpenFileName(
             self, "Open Image", "", "Images (*.png *.xpm *.jpg *.jpeg *.bmp *.tif *.tiff)"
         )
         if file_name:
-            self.image_path = file_name
             pixmap = QPixmap(file_name)
             if not pixmap.isNull():
-                self.image_label.set_image(pixmap)
+                self.set_loaded_image(pixmap, file_name)
 
     def get_marked_pixmap(self, label_font_size_delta=0):
         """Return a QPixmap of the original image with all annotations drawn on it,
         or None if no image is loaded."""
-        if not self.image_path or not self.image_label._original_pixmap:
+        if self.image_label._original_pixmap is None:
             return None
 
         # Create a mutable copy of the original pixmap
@@ -616,6 +748,17 @@ class ImageSlot(QWidget):
                 support_y = widget_norm_to_image_px(y_norm, is_y=True)
                 painter.drawLine(0, support_y, img_w, support_y)
                 painter.drawText(int(6 * scale_factor), support_y - int(4 * scale_factor), str(label))
+
+        for line in self.image_label.custom_lines:
+            position = float(line.get("position", 0.5))
+            orientation = line.get("orientation")
+            painter.setPen(_make_custom_line_pen(orientation, max(1.0, CUSTOM_LINE_BASE_WIDTH * scale_factor)))
+            if orientation == "horizontal":
+                custom_y = widget_norm_to_image_px(position, is_y=True)
+                painter.drawLine(0, custom_y, img_w, custom_y)
+            elif orientation == "vertical":
+                custom_x = widget_norm_to_image_px(position, is_y=False)
+                painter.drawLine(custom_x, 0, custom_x, img_h)
 
         # Draw Spots
         spots = self.image_label.spots
@@ -2806,10 +2949,9 @@ class MainWindow(QMainWindow):
             if i < len(self.slots):
                 full_path = os.path.join(examples_dir, filename)
                 if os.path.exists(full_path):
-                    self.slots[i].image_path = full_path # Store path
                     pixmap = QPixmap(full_path)
                     if not pixmap.isNull():
-                        self.slots[i].image_label.set_image(pixmap)
+                        self.slots[i].set_loaded_image(pixmap, full_path)
 
     def save_analysis(self):
         import json
@@ -2861,6 +3003,7 @@ class MainWindow(QMainWindow):
                 "start_line_y": slot.image_label.start_line_y,
                 "front_line_y": slot.image_label.front_line_y,
                 "show_support_lines": slot.image_label.show_support_lines,
+                "custom_lines": slot.image_label.custom_lines,
                 "spots": slot.image_label.spots
             }
             data["plates"].append(plate_data)
@@ -2931,6 +3074,8 @@ class MainWindow(QMainWindow):
                 slot.support_lines_checkbox.setChecked(False)
                 slot.support_lines_checkbox.blockSignals(False)
                 slot.image_label.show_support_lines = False
+                slot.image_label.custom_lines = []
+                slot.set_custom_line_controls_enabled(False)
 
             # Determine next sample id (max id + 1)
             max_sid = 0
@@ -2983,13 +3128,13 @@ class MainWindow(QMainWindow):
                     start_y = plate_info.get("start_line_y", 0.9)
                     front_y = plate_info.get("front_line_y", 0.1)
                     show_support_lines = bool(plate_info.get("show_support_lines", False))
+                    custom_lines = plate_info.get("custom_lines", [])
                     spots = plate_info.get("spots", [])
 
                     if path and os.path.exists(path):
-                        slot.image_path = path
                         pixmap = QPixmap(path)
                         if not pixmap.isNull():
-                            slot.image_label.set_image(pixmap)
+                            slot.set_loaded_image(pixmap, path)
 
                     # Set Lines
                     slot.image_label.start_line_y = start_y
@@ -2998,6 +3143,20 @@ class MainWindow(QMainWindow):
                     slot.support_lines_checkbox.setChecked(show_support_lines)
                     slot.support_lines_checkbox.blockSignals(False)
                     slot.image_label.show_support_lines = show_support_lines
+                    safe_custom_lines = []
+                    for line in custom_lines:
+                        orientation = line.get("orientation")
+                        if orientation not in {"horizontal", "vertical"}:
+                            continue
+                        try:
+                            position = float(line.get("position", 0.5))
+                        except (TypeError, ValueError):
+                            position = 0.5
+                        safe_custom_lines.append({
+                            "orientation": orientation,
+                            "position": max(0.0, min(1.0, position)),
+                        })
+                    slot.image_label.custom_lines = safe_custom_lines
                     
                     # Set Spots
                     # Ensure spots have integer sample_id as saved
@@ -3047,6 +3206,8 @@ class MainWindow(QMainWindow):
             if slot.image_path or slot.image_label._original_pixmap is not None:
                 return True
             if slot.image_label.spots:
+                return True
+            if slot.image_label.custom_lines:
                 return True
 
         return False
@@ -3185,12 +3346,14 @@ class MainWindow(QMainWindow):
             slot.image_label.setText("No Image Loaded")
             slot.image_label.setPixmap(QPixmap()) # Clear displayed pixmap
             slot.image_label.spots = []
+            slot.image_label.custom_lines = []
             slot.image_label.start_line_y = 0.9
             slot.image_label.front_line_y = 0.1
             slot.image_label.show_lines = False
             slot.image_label.show_support_lines = False
             slot.image_label.support_line_y_mapper = None
             slot.image_label.support_line_specs_provider = None
+            slot.set_custom_line_controls_enabled(False)
             slot.support_lines_checkbox.blockSignals(True)
             slot.support_lines_checkbox.setChecked(False)
             slot.support_lines_checkbox.blockSignals(False)
