@@ -58,6 +58,8 @@ class SquareLabel(QLabel):
 
         # Line Dragging State
         self.dragged_line = None # "Start" or "Front"
+        self.show_support_lines = False
+        self.support_line_y_mapper = None
 
     def set_global_colors(self, colors):
         self.global_colors = colors
@@ -94,11 +96,11 @@ class SquareLabel(QLabel):
         self.setText("")
         self.update_display()
         self.linesMoved.emit(1.0 - self.start_line_y, 1.0 - self.front_line_y)
-        
+
     def resizeEvent(self, event):
         self.update_display()
         super().resizeEvent(event)
-        
+
     def mouseMoveEvent(self, event):
         x_norm = event.position().x() / self.width()
         y_norm = event.position().y() / self.height()
@@ -160,7 +162,7 @@ class SquareLabel(QLabel):
                     if spot['sample_id'] == self.current_sample_id:
                         existing_index = i
                         break
-                
+
                 if existing_index is not None:
                     # Update existing spot
                     self.spots[existing_index]['x'] = x_norm
@@ -172,20 +174,20 @@ class SquareLabel(QLabel):
                         'x': x_norm,
                         'y': y_norm
                     })
-                
+
                 self.update()
                 self.spotsChanged.emit(self.spots)
         else:
             # Check for line hit first (priority over general click, but maybe spots priority?)
             # Let's say Spots > Lines > Background
-            
+
             # 1. Spot Hit
             click_x = event.position().x()
             click_y = event.position().y()
-            
+
             clicked_idx = None
             closest_dist = float('inf')
-            
+
             for i, spot in enumerate(self.spots):
                 px = spot['x'] * self.width()
                 py = spot['y'] * self.height()
@@ -194,7 +196,7 @@ class SquareLabel(QLabel):
                     if dist < closest_dist:
                         closest_dist = dist
                         clicked_idx = i
-            
+
             if clicked_idx is not None:
                 self.dragged_spot_index = clicked_idx
             elif self.show_lines:
@@ -217,6 +219,13 @@ class SquareLabel(QLabel):
         if not self.adding_sample_mode:
              self.setCursor(Qt.CursorShape.ArrowCursor)
 
+    def rf_to_widget_y(self, rf_value):
+        if self.support_line_y_mapper is not None:
+            mapped_y = self.support_line_y_mapper(rf_value)
+            if mapped_y is not None:
+                return mapped_y
+        return self.start_line_y + (rf_value * (self.front_line_y - self.start_line_y))
+
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
@@ -230,6 +239,18 @@ class SquareLabel(QLabel):
             painter.setPen(QPen(QColor("red"), 2))
             front_y = int(self.front_line_y * self.height())
             painter.drawLine(0, front_y, self.width(), front_y)
+
+            if self.show_support_lines:
+                support_color = QColor("gray")
+                painter.setPen(QPen(support_color, 1))
+                font = painter.font()
+                font.setPointSize(max(8, font.pointSize()))
+                painter.setFont(font)
+                for idx, rf_tenths in enumerate(range(10, 81, 10), start=1):
+                    y = int(self.rf_to_widget_y(rf_tenths / 100.0) * self.height())
+                    pos = idx*10 # for displaying Rf value above line
+                    painter.drawLine(0, y, self.width(), y)
+                    painter.drawText(4, y - 4, str(pos))
 
         # Draw Spots (unconditional)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -271,8 +292,8 @@ class SquareLabel(QLabel):
     def update_display(self):
         if self._original_pixmap and not self._original_pixmap.isNull():
             scaled = self._original_pixmap.scaled(
-                self.size(), 
-                Qt.AspectRatioMode.KeepAspectRatio, 
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
             super().setPixmap(scaled)
@@ -369,12 +390,12 @@ class ImageSlot(QWidget):
         title_layout.addWidget(self.range_spin)
 
         self.layout.addLayout(title_layout)
-        
+
         # Image Area
         self.image_container = SquareImageContainer()
         self.image_label = self.image_container.image_label
         self.layout.addWidget(self.image_container, 1)
-        
+
         # Controls
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
@@ -389,6 +410,11 @@ class ImageSlot(QWidget):
         self.export_button = QPushButton("Export Image")
         self.export_button.clicked.connect(self.export_marked_image)
         controls_layout.addWidget(self.export_button)
+
+        self.support_lines_checkbox = QCheckBox("Support Lines")
+        self.support_lines_checkbox.setChecked(False)
+        self.support_lines_checkbox.toggled.connect(self._on_support_lines_toggled)
+        controls_layout.addWidget(self.support_lines_checkbox)
 
     def hasHeightForWidth(self):
         return True
@@ -445,7 +471,11 @@ class ImageSlot(QWidget):
         """Get current normalized range value (0.0-1.0)."""
         value = self.range_spin.value()
         return value / 100.0 if self.relative_rf_display else value
-        
+
+    def _on_support_lines_toggled(self, checked):
+        self.image_label.show_support_lines = checked
+        self.image_label.update()
+
     def load_image(self):
         file_name, _ = QFileDialog.getOpenFileName(
             self, "Open Image", "", "Images (*.png *.xpm *.jpg *.jpeg *.bmp *.tif *.tiff)"
@@ -461,21 +491,21 @@ class ImageSlot(QWidget):
         or None if no image is loaded."""
         if not self.image_path or not self.image_label._original_pixmap:
             return None
-            
+
         # Create a mutable copy of the original pixmap
         export_pixmap = self.image_label._original_pixmap.copy()
-        
+
         painter = QPainter(export_pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
+
         # Dimensions of original image
         img_w = export_pixmap.width()
         img_h = export_pixmap.height()
-        
+
         # Widget Dimensions and Scaling Logic (matching SquareLabel.update_display)
         label_w = self.image_label.width()
         label_h = self.image_label.height()
-        
+
         if img_w <= 0 or img_h <= 0:
             painter.end()
             return None
@@ -484,14 +514,14 @@ class ImageSlot(QWidget):
         scale_w = label_w / img_w
         scale_h = label_h / img_h
         scale = min(scale_w, scale_h)
-        
+
         drawn_w = int(img_w * scale)
         drawn_h = int(img_h * scale)
-        
+
         # Calculate offsets (centering)
         offset_x = (label_w - drawn_w) // 2
         offset_y = (label_h - drawn_h) // 2
-        
+
         # Coordinate Transformation Function: Widget Normalized -> Image Pixel
         def widget_norm_to_image_px(norm_val, is_y=True):
             if is_y:
@@ -510,25 +540,36 @@ class ImageSlot(QWidget):
         line_width = int(4 * scale_factor)
         spot_radius = int(self.image_label.spot_radius * scale_factor)
         spot_pen_width = int(2 * scale_factor)
-        
+
         # Draw Start Line (Green)
         start_y = widget_norm_to_image_px(self.image_label.start_line_y, is_y=True)
         pen = QPen(QColor("green"), line_width)
         painter.setPen(pen)
         painter.drawLine(0, start_y, img_w, start_y)
-        
+
         # Draw Front Line (Red)
         front_y = widget_norm_to_image_px(self.image_label.front_line_y, is_y=True)
         pen = QPen(QColor("red"), line_width)
         painter.setPen(pen)
         painter.drawLine(0, front_y, img_w, front_y)
-        
+
+        if self.image_label.show_support_lines:
+            support_color = QColor("gray")
+            painter.setPen(QPen(support_color, max(1, int(2 * scale_factor))))
+            font = painter.font()
+            font.setPointSize(max(8, int(10 * scale_factor)))
+            painter.setFont(font)
+            for idx, rf_tenths in enumerate(range(10, 81, 10), start=1):
+                support_y = widget_norm_to_image_px(self.image_label.rf_to_widget_y(rf_tenths / 100.0), is_y=True)
+                painter.drawLine(0, support_y, img_w, support_y)
+                painter.drawText(int(6 * scale_factor), support_y - int(4 * scale_factor), str(idx))
+
         # Draw Spots
         spots = self.image_label.spots
         colors = self.image_label.global_colors
-        
+
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        
+
         for spot in spots:
             sid = spot['sample_id']
             color = colors.get(sid, QColor("black"))
@@ -548,22 +589,22 @@ class ImageSlot(QWidget):
                 font.setPointSize(int(effective_font_size * scale_factor))
                 painter.setFont(font)
                 painter.drawText(px + spot_radius + int(5 * scale_factor), py - int(5 * scale_factor), name)
-            
+
         painter.end()
-        
+
         return export_pixmap
 
     def export_marked_image(self):
         export_pixmap = self.get_marked_pixmap()
         if export_pixmap is None:
             return
-            
+
         file_name, _ = QFileDialog.getSaveFileName(
             self, "Export Marked Image", "", "PNG Images (*.png);;JPEG Images (*.jpg)"
         )
         if not file_name:
             return
-            
+
         export_pixmap.save(file_name)
 
 class MainWindow(QMainWindow):
@@ -586,21 +627,21 @@ class MainWindow(QMainWindow):
         self.db_path = os.path.join(self.base_path, "tlcid_database.db")
         self.debug_mode = debug_mode
         self.analysis_file_path = None  # Last loaded/saved analysis JSON path
-        
+
         # State
         self.samples = {} # {id: {'color': QColor, 'name': str}}
         self.genus_to_substances = {} # Cache for genus-specific substance filtering
         self.next_sample_id = 1
         self.active_regular_marking_sid = None
         self.colors = [
-            QColor("cyan"), QColor("magenta"), QColor("yellow"), 
-            QColor("blue"), QColor("orange"), QColor("purple"), 
+            QColor("cyan"), QColor("magenta"), QColor("yellow"),
+            QColor("blue"), QColor("orange"), QColor("purple"),
             QColor("lime"), QColor("pink")
         ]
-        
+
         self.char_windows = {}    # {sid: SubstanceCharacteristicsWindow}
         self.detail_windows = {}  # {name: SubstanceDetailWindow}
-        
+
         self.reference_data = [] # Cache for prediction
         self._ensure_default_db_connection()
         self.load_reference_data() # Load DB data on startup
@@ -650,17 +691,17 @@ class MainWindow(QMainWindow):
         # Calibration Mode: "Linear interpolation" or "Nearest reference"
         self.calibration_mode = "Linear interpolation"
 
-        
+
         # Main Layout Construction
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
-        
+
         main_layout = QVBoxLayout()
         main_widget.setLayout(main_layout)
 
         # Toolbar Area - Main horizontal layout with two columns
         toolbar_hlayout = QHBoxLayout()
-        
+
         # Left column: toolbar controls in three rows
         toolbar_left_col = QVBoxLayout()
         toolbar_left_col.setSpacing(0)
@@ -669,20 +710,20 @@ class MainWindow(QMainWindow):
         row1_layout = QHBoxLayout()
         row1_layout.setContentsMargins(0, 0, 0, 0)
         row1_layout.setSpacing(0)
-        
+
         self.reference_substances_label = QLabel()
         self.reference_substances_label.setStyleSheet("color: gray; padding: 0px; margin: 0px;")
         self.reference_substances_label.setText("<b>Mark known substances as references:</b>")
         row1_layout.addWidget(self.reference_substances_label)
         row1_layout.addStretch()
         toolbar_left_col.addLayout(row1_layout)
-        
+
         # Row 2: All buttons for marking reference substances
         row2_layout = QHBoxLayout()
         row2_layout.setSpacing(5)
         row2_layout.setContentsMargins(0, 0, 0, 0)
 
-        
+
         self.mark_atranorin_button = QPushButton("Atranorin")
         self.mark_atranorin_button.setCheckable(True)
         self.mark_atranorin_button.clicked.connect(self.toggle_mark_atranorin)
@@ -715,19 +756,19 @@ class MainWindow(QMainWindow):
         row3_layout = QHBoxLayout()
         row3_layout.setSpacing(0)
         row3_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         self.reference_substances_label = QLabel()
         self.reference_substances_label.setStyleSheet("color: gray; padding: 0px; margin: 0px;")
         self.reference_substances_label.setText("<b>Mark unknown substances:</b>")
         row3_layout.addWidget(self.reference_substances_label)
         row3_layout.addStretch()
         toolbar_left_col.addLayout(row3_layout)
-        
+
         # Row 4: "Mark Substance" button
         row4_layout = QHBoxLayout()
         row4_layout.setSpacing(0)
         row4_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         self.mark_substance_button = QPushButton("New Substance")
         self.mark_substance_button.setCheckable(True)
         self.mark_substance_button.clicked.connect(self.toggle_mark_substance)
@@ -743,10 +784,10 @@ class MainWindow(QMainWindow):
         self.calibration_combo.setToolTip("Linear interpolation: uses standard Rf values as anchor points for Rf correction.\nNearest reference: corrects Rf based on the single closest reference substance.")
         self.calibration_combo.currentTextChanged.connect(self.on_calibration_mode_changed)
         row4_layout.addWidget(self.calibration_combo)
-        
+
         row4_layout.addStretch()
         toolbar_left_col.addLayout(row4_layout)
-        
+
         # Row 5: Additional inline controls
         row5_layout = QHBoxLayout()
         row5_layout.setSpacing(0)
@@ -761,13 +802,13 @@ class MainWindow(QMainWindow):
         row5_layout.addWidget(self.range_main)
 
         self.update_detection_status_label()
-        
+
         row5_layout.addStretch()
         toolbar_left_col.addLayout(row5_layout)
-        
+
         # Add left column to main toolbar layout
         toolbar_hlayout.addLayout(toolbar_left_col)
-        
+
         # Right column: App icon with TLCid text below (spans all three rows)
         import os
         base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -800,7 +841,7 @@ class MainWindow(QMainWindow):
         # Vertical splitter: plates on top, results table on bottom
         self.main_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # Slots Area – wrap in a container widget for the splitter
+        # Slots Area - wrap in a container widget for the splitter
         self.slots = []
         self.plate_labels = ['A', "B'", 'C']
         slots_widget = PlateSlotsWidget(len(self.plate_labels))
@@ -816,13 +857,13 @@ class MainWindow(QMainWindow):
             self.slots.append(slot)
             slots_layout.addWidget(slot)
         self.main_splitter.addWidget(slots_widget)
-        
+
         # Results Display
         # Results Display using QTableWidget
         self.results_table = QTableWidget()
         self.results_table.setColumnCount(8)
         self.results_table.setHorizontalHeaderLabels(["Color", "Reference", "Substance", "Plate A", "Plate B'", "Plate C", "Predictions", "All Results"])
-        
+
         # Column Resizing Logic
         header = self.results_table.horizontalHeader()
 
@@ -849,17 +890,17 @@ class MainWindow(QMainWindow):
         # 7: All Results button (Fixed, Small)
         header.setSectionResizeMode(self.RESULTS_COL_ALL_RESULTS, QHeaderView.ResizeMode.Fixed)
         self.results_table.setColumnWidth(self.RESULTS_COL_ALL_RESULTS, 90)
-        
+
         # Ensure horizontal scrolling is possible
         self.results_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.results_table.setSortingEnabled(True)
         self.results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.results_table.customContextMenuRequested.connect(self.show_results_table_context_menu)
-        
+
         # Row Height
         # Connect Cell Click
         self.results_table.cellClicked.connect(self.handle_table_click)
-        
+
         self.main_splitter.addWidget(self.results_table)
 
         # Keep the plate area at its natural height; extra window height goes to the table.
@@ -1003,22 +1044,22 @@ class MainWindow(QMainWindow):
     def change_sample_color(self, sid):
         if sid not in self.samples:
             return
-            
+
         current_color = self.samples[sid]['color']
         new_color = QColorDialog.getColor(current_color, self, "Select Spot Color")
-        
+
         if new_color.isValid():
             self.samples[sid]['color'] = new_color
-            
+
             # Update Slots
             colors = {s: d['color'] for s, d in self.samples.items()}
-            # Update standard references if needed? 
+            # Update standard references if needed?
             # Standards map to 0 and -1 which reuse these colors if they are in samples.
-            
+
             for slot in self.slots:
                 slot.image_label.set_global_colors(colors)
                 slot.image_label.update()
-                
+
             self.update_results_display()
 
     def _ensure_default_db_connection(self):
@@ -1074,7 +1115,7 @@ class MainWindow(QMainWindow):
     def create_menu(self):
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("File")
-        
+
         about_action = QAction("About", self)
         about_action.setMenuRole(QAction.MenuRole.NoRole)
         about_action.triggered.connect(self.show_about_dialog)
@@ -1091,7 +1132,7 @@ class MainWindow(QMainWindow):
         load_analysis_action = QAction("Load Analysis", self)
         load_analysis_action.triggered.connect(self.load_analysis)
         file_menu.addAction(load_analysis_action)
-        
+
         load_examples_action = QAction("Load Examples", self)
         load_examples_action.triggered.connect(self.load_examples)
         file_menu.addAction(load_examples_action)
@@ -1099,7 +1140,7 @@ class MainWindow(QMainWindow):
 
         # Analysis Menu
         analysis_menu = menu_bar.addMenu("Analysis")
-        
+
         settings_action = QAction("Settings", self)
         settings_action.setMenuRole(QAction.MenuRole.NoRole)
         settings_action.triggered.connect(self.show_settings_window)
@@ -1119,7 +1160,7 @@ class MainWindow(QMainWindow):
 
         # Reference Menu
         ref_menu = menu_bar.addMenu("Reference")
-        
+
         tables = ["Lichens", "Substances"]
         for table in tables:
             action = QAction(table, self)
@@ -1135,15 +1176,15 @@ class MainWindow(QMainWindow):
 
     def show_table(self, table_name):
         from gui.database_window import DatabaseTableWindow
-        
+
         # Store windows in a dict to prevent GC and allow multiple open
         if not hasattr(self, 'table_windows'):
             self.table_windows = {}
-            
+
         # Create logic: bring to front if open, else create
         if table_name not in self.table_windows or self.table_windows[table_name] is None:
              self.table_windows[table_name] = DatabaseTableWindow(table_name, self.db_path)
-        
+
         window = self.table_windows[table_name]
         window.show()
         window.raise_()
@@ -1154,7 +1195,7 @@ class MainWindow(QMainWindow):
             name = unquote(link.split(":", 1)[1])
             from gui.substance_detail_window import SubstanceDetailWindow
             from PyQt6.QtSql import QSqlDatabase
-            
+
             # Ensure DB connection exists (should be established by load_reference_data or show_table)
             # Check default connection
             if not QSqlDatabase.contains("qt_sql_default_connection"):
@@ -1164,19 +1205,19 @@ class MainWindow(QMainWindow):
                     return
             else:
                 db = QSqlDatabase.database()
-            
 
-            
+
+
             # Manage window instance to prevent GC
             # (initialized in __init__)
-            
+
             # Close existing if same? Or allow multiple?
             # Let's allow multiple distinct, bring to front if same
             if name in self.detail_windows and self.detail_windows[name].isVisible():
                 self.detail_windows[name].raise_()
                 self.detail_windows[name].activateWindow()
                 return
-                
+
             window = SubstanceDetailWindow(name, db)
             self.detail_windows[name] = window
             window.show()
@@ -1452,7 +1493,7 @@ class MainWindow(QMainWindow):
     def ensure_single_mode(self, active_btn):
         # Helper to uncheck other buttons
         buttons = [
-            self.mark_substance_button, 
+            self.mark_substance_button,
             self.mark_atranorin_button,
             self.mark_norstictic_button,
             self.mark_rhizocarpic_button,
@@ -1466,7 +1507,7 @@ class MainWindow(QMainWindow):
     def activate_marking_mode(self, sid, color, name):
         if sid not in self.samples:
              self.samples[sid] = {'color': color, 'name': name}
-        
+
         color_map = {k: v['color'] for k, v in self.samples.items()}
         for slot in self.slots:
             slot.image_label.set_global_colors(color_map)
@@ -1607,7 +1648,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'settings_window') or self.settings_window is None:
             self.settings_window = SettingsWindow()
             self.settings_window.settingsChanged.connect(self.update_detection_settings)
-            
+
         self.settings_window.set_current_settings(
             self.detection_method,
             self.detection_range,
@@ -1621,16 +1662,16 @@ class MainWindow(QMainWindow):
     def show_species_prediction_window(self):
         from gui.species_prediction_window import SpeciesPredictionWindow
         from PyQt6.QtSql import QSqlDatabase
-        
+
         # Gather all current predicted substances with their sample info
         prediction_data = []
         # Sort samples by ID to keep the list ordered
         sorted_sample_ids = sorted(self.samples.keys())
-        
+
         for sid in sorted_sample_ids:
             if sid > 0: # Skip reference markers
                 sdata = self.samples[sid]
-                
+
                 assigned = sdata.get('assigned_name')
                 if assigned:
                     # If manually named, only use that name for species prediction
@@ -1649,7 +1690,7 @@ class MainWindow(QMainWindow):
                             'sample_name': display_name,
                             'color': sdata['color']
                         })
-        
+
         if not prediction_data:
             QMessageBox.warning(self, "No Predictions", "No substances have been predicted yet. Please mark spots on the plates first.")
             return
@@ -1857,7 +1898,7 @@ class MainWindow(QMainWindow):
     def toggle_mark_substance(self, checked):
         if checked:
             self.ensure_single_mode(self.mark_substance_button)
-                
+
             # Entering Add Mode
             self.mark_substance_button.setText("Stop Marking")
             sid = self.active_regular_marking_sid
@@ -1874,7 +1915,7 @@ class MainWindow(QMainWindow):
     def toggle_mark_atranorin(self, checked):
         if checked:
             self.ensure_single_mode(self.mark_atranorin_button)
-            
+
             # Atranorin Mode (ID 0)
             self.mark_atranorin_button.setText("Stop Ref (Atr)")
             self.activate_marking_mode(0, QColor("red"), "Atranorin (Ref)")
@@ -1885,7 +1926,7 @@ class MainWindow(QMainWindow):
     def toggle_mark_norstictic(self, checked):
         if checked:
             self.ensure_single_mode(self.mark_norstictic_button)
-            
+
             # Norstictic Mode (ID -1)
             self.mark_norstictic_button.setText("Stop Ref (Nor)")
             self.activate_marking_mode(-1, QColor("gold"), "Norstictic Acid (Ref)")
@@ -1896,7 +1937,7 @@ class MainWindow(QMainWindow):
     def toggle_mark_rhizocarpic(self, checked):
         if checked:
             self.ensure_single_mode(self.mark_rhizocarpic_button)
-            
+
             # Rhizocarpic Acid Mode (ID -2)
             self.mark_rhizocarpic_button.setText("Stop Ref (Rhi)")
             self.activate_marking_mode(-2, QColor("orange"), "Rhizocarpic Acid (Ref)")
@@ -1907,7 +1948,7 @@ class MainWindow(QMainWindow):
     def toggle_mark_lecanoric(self, checked):
         if checked:
             self.ensure_single_mode(self.mark_lecanoric_button)
-            
+
             # Lecanoric Acid Mode (ID -3)
             self.mark_lecanoric_button.setText("Stop Ref (Lec)")
             self.activate_marking_mode(-3, QColor("limegreen"), "Lecanoric Acid (Ref)")
@@ -1918,13 +1959,107 @@ class MainWindow(QMainWindow):
     def toggle_mark_evernic(self, checked):
         if checked:
             self.ensure_single_mode(self.mark_evernic_button)
-            
+
             # Evernic Acid Mode (ID -4)
             self.mark_evernic_button.setText("Stop Ref (Eve)")
             self.activate_marking_mode(-4, QColor("magenta"), "Evernic Acid (Ref)")
         else:
             self.mark_evernic_button.setText("Evernic Acid")
             self.deactivate_marking_mode()
+
+    def _raw_rf_from_slot_y(self, slot, raw_y):
+        raw_start = slot.image_label.start_line_y
+        raw_front = slot.image_label.front_line_y
+
+        u_start = 1.0 - raw_start
+        u_front = 1.0 - raw_front
+        u_spot = 1.0 - raw_y
+        denom = u_front - u_start
+
+        if abs(denom) < 1e-6:
+            return 0.0
+        return (u_spot - u_start) / denom
+
+    def _correct_plate_rf(self, raw_rf, standards):
+        corrected_val = raw_rf
+
+        if self.calibration_mode == "Linear interpolation":
+            points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
+            for i in range(len(points) - 1):
+                x1, y1 = points[i]
+                x2, y2 = points[i + 1]
+                if x1 <= raw_rf <= x2:
+                    if abs(x2 - x1) > 1e-7:
+                        corrected_val = y1 + (raw_rf - x1) * (y2 - y1) / (x2 - x1)
+                    else:
+                        corrected_val = y1
+                    break
+        elif standards:
+            closest_std = None
+            min_dist = float('inf')
+            for obs_rf, std_rf in standards:
+                dist = abs(raw_rf - obs_rf)
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_std = (obs_rf, std_rf)
+
+            if closest_std:
+                obs_rf, std_rf = closest_std
+                if obs_rf > 1e-7:
+                    correction_factor = std_rf / obs_rf
+                    corrected_val = raw_rf * correction_factor
+                    corrected_val = max(0.0, min(1.0, corrected_val))
+
+        return corrected_val
+
+    def _support_line_raw_rf(self, corrected_rf, standards):
+        if not standards:
+            return corrected_rf
+
+        if self.calibration_mode == "Linear interpolation":
+            points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
+            for i in range(len(points) - 1):
+                x1, y1 = points[i]
+                x2, y2 = points[i + 1]
+                lo = min(y1, y2)
+                hi = max(y1, y2)
+                if lo <= corrected_rf <= hi:
+                    if abs(y2 - y1) > 1e-7:
+                        return x1 + (corrected_rf - y1) * (x2 - x1) / (y2 - y1)
+                    return x1
+            return corrected_rf
+
+        closest_std = None
+        min_dist = float('inf')
+        for obs_rf, std_rf in standards:
+            dist = abs(corrected_rf - std_rf)
+            if dist < min_dist:
+                min_dist = dist
+                closest_std = (obs_rf, std_rf)
+
+        if closest_std:
+            obs_rf, std_rf = closest_std
+            if std_rf > 1e-7:
+                raw_rf = corrected_rf * (obs_rf / std_rf)
+                return max(0.0, min(1.0, raw_rf))
+
+        return corrected_rf
+
+    def _support_line_widget_y(self, slot, corrected_rf, standards):
+        raw_rf = self._support_line_raw_rf(corrected_rf, standards)
+        return slot.image_label.start_line_y + (raw_rf * (slot.image_label.front_line_y - slot.image_label.start_line_y))
+
+    def _apply_support_line_mapping(self, active_standards):
+        for plate_idx, slot in enumerate(self.slots):
+            standards = list(active_standards.get(plate_idx, []))
+            if standards:
+                slot.image_label.support_line_y_mapper = (
+                    lambda rf_value, slot=slot, standards=standards: self._support_line_widget_y(slot, rf_value, standards)
+                )
+            else:
+                slot.image_label.support_line_y_mapper = None
+            if slot.image_label.show_support_lines:
+                slot.image_label.update()
 
     def update_results_display(self):
         import sys
@@ -1942,38 +2077,22 @@ class MainWindow(QMainWindow):
         # Aggregate data from all slots
         # Map: Sample ID -> { Plate Index -> [rf1, rf2, ...] }
         aggregated = {}
-        
+
         for i, slot in enumerate(self.slots):
-            # Get Start and Front lines (raw normalized coords: 0=Top, 1=Bottom)
-            # Invert them for logical calculation (0=Bottom, 1=Top)
-            raw_start = slot.image_label.start_line_y
-            raw_front = slot.image_label.front_line_y
-            
-            u_start = 1.0 - raw_start
-            u_front = 1.0 - raw_front
-            
-            denom = u_front - u_start
-            
             spots = slot.image_label.spots # list of dicts
             for spot in spots:
                 # Debug print for spots
                 _safe_print(f"DEBUG: Spot on Plate {i}: {spot}")
                 sid = spot['sample_id']
                 raw_y = spot['y']
-                u_spot = 1.0 - raw_y
-                
-                # Calculate Rf
-                if abs(denom) < 1e-6:
-                    rf_val = 0.0 # Avoid div by zero
-                else:
-                    rf_val = (u_spot - u_start) / denom
-                
+                rf_val = self._raw_rf_from_slot_y(slot, raw_y)
+
                 if sid not in aggregated:
                     aggregated[sid] = {}
                 if i not in aggregated[sid]:
                     aggregated[sid][i] = []
                 aggregated[sid][i].append(rf_val)
-        
+
         # Sync self.samples with aggregated data:
         # If a sample ID is no longer in any of the plate spots (not in 'aggregated'),
         # remove it from self.samples to clear it from the results list.
@@ -2005,7 +2124,7 @@ class MainWindow(QMainWindow):
                 except RuntimeError:
                     pass  # Widget already deleted by Qt
                 self.char_windows.pop(sid, None)
-        
+
         # Refresh global color map in slots after removal to keep synchronized
         if ids_to_remove:
             color_map = {k: v['color'] for k, v in self.samples.items()}
@@ -2015,7 +2134,7 @@ class MainWindow(QMainWindow):
         # Clear previous matches for remaining samples
         for sid, sdata in self.samples.items():
             sdata['last_matches'] = []
-        
+
         # Debug print for aggregated data
         _safe_print(f"DEBUG: Aggregated Rf values: {aggregated}")
 
@@ -2103,6 +2222,8 @@ class MainWindow(QMainWindow):
         for idx in active_standards:
             active_standards[idx].sort(key=lambda x: x[0])
 
+        self._apply_support_line_mapping(active_standards)
+
         # Debug output: Show which reference substances are used for each plate
         _safe_print("=" * 80)
         _safe_print("CALIBRATION REFERENCE SUBSTANCES PER PLATE")
@@ -2158,21 +2279,21 @@ class MainWindow(QMainWindow):
 
         for sid in sorted_ids:
             if sid not in self.samples:
-                continue 
-                
+                continue
+
             color = self.samples[sid]['color']
-            
+
             # Prepare row data
             current_row = self.results_table.rowCount()
             self.results_table.insertRow(current_row)
-            
+
             # 1. Color Column
             color_item = QTableWidgetItem()
             color_item.setBackground(color)
             color_item.setData(Qt.ItemDataRole.UserRole, sid) # Store SID
             color_item.setFlags(Qt.ItemFlag.NoItemFlags) # Non-editable/selectable
             self.results_table.setItem(current_row, self.RESULTS_COL_COLOR, color_item)
-            
+
             # 2. Substance Name (Clickable Link)
             name_text = self.samples[sid].get('assigned_name')
             if not name_text:
@@ -2294,13 +2415,7 @@ class MainWindow(QMainWindow):
                                 obs_rf, std_rf = closest_std
                                 # Apply correction based on the nearest reference
                                 # The correction shifts the observed value to match the reference scale
-                                if obs_rf > 1e-7:  # Avoid division by zero
-                                    # Correction factor: std_rf / obs_rf
-                                    # Corrected = raw_val * (std_rf / obs_rf)
-                                    correction_factor = std_rf / obs_rf
-                                    corrected_val = raw_val * correction_factor
-                                    # Clamp to valid Rf range
-                                    corrected_val = max(0.0, min(1.0, corrected_val))
+                                corrected_val = self._correct_plate_rf(raw_val, standards)
 
                                 # Identify the reference substance name
                                 std_name = "Unknown"
@@ -2371,7 +2486,7 @@ class MainWindow(QMainWindow):
                     else:
                         _safe_print(f"    No Rf correction applied (no reference standards on this plate)")
                 _safe_print("-" * 80)
-            
+
             # 3. Predictions
             matches = []
             if sid > 0 and prediction_input:
@@ -2444,7 +2559,7 @@ class MainWindow(QMainWindow):
                          f'<a href="substance:{encoded_name}" title="Match score: {score:.6f}">{display_name}</a>'
                      )
                  match_str = ", ".join(match_links)
-                 
+
                  if len(matches) > 5:
                      more_count = len(matches) - 5
                      match_str += f" + {more_count} more"
@@ -2466,7 +2581,7 @@ class MainWindow(QMainWindow):
                  )
             else:
                 pred_label.setText(f"-{filter_tags}" if filter_tags else "-")
-                
+
             pred_label.setContentsMargins(5, 0, 5, 0)
             self.results_table.setCellWidget(current_row, self.RESULTS_COL_PREDICTIONS, pred_label)
 
@@ -2553,7 +2668,7 @@ class MainWindow(QMainWindow):
             (-3, self.mark_lecanoric_button, "limegreen"),
             (-4, self.mark_evernic_button, "magenta"),
         ]
-        
+
         for sid, button, color in ref_button_config:
             # Check if this reference substance is marked on all three plates
             if sid in aggregated and len(aggregated[sid]) == 3:
@@ -2569,7 +2684,7 @@ class MainWindow(QMainWindow):
         root_path = os.path.dirname(base_path)
         examples_dir = os.path.join(root_path, "examples")
         example_files = ["A.jpeg", "B.jpeg", "C.jpeg"]
-        
+
         for i, filename in enumerate(example_files):
             if i < len(self.slots):
                 full_path = os.path.join(examples_dir, filename)
@@ -2587,7 +2702,7 @@ class MainWindow(QMainWindow):
         )
         if not file_name:
             return False
-            
+
         data = {
             "version": 2,
             "detection_method": self.detection_method,
@@ -2599,7 +2714,7 @@ class MainWindow(QMainWindow):
             "samples": {},
             "plates": []
         }
-        
+
         # Save Samples (only need ID and name, color can be deterministic)
         for sid, sdata in self.samples.items():
             sample_data = {
@@ -2619,7 +2734,7 @@ class MainWindow(QMainWindow):
                 "reference_rf": sdata.get('reference_rf')
             }
             data["samples"][sid] = sample_data
-            
+
         # Save Plates
         for i, slot in enumerate(self.slots):
             plate_data = {
@@ -2627,10 +2742,11 @@ class MainWindow(QMainWindow):
                 "image_path": slot.image_path,
                 "start_line_y": slot.image_label.start_line_y,
                 "front_line_y": slot.image_label.front_line_y,
+                "show_support_lines": slot.image_label.show_support_lines,
                 "spots": slot.image_label.spots
             }
             data["plates"].append(plate_data)
-            
+
         try:
             with open(file_name, 'w') as f:
                 json.dump(data, f, indent=4)
@@ -2649,15 +2765,15 @@ class MainWindow(QMainWindow):
         )
         if not file_name:
             return
-            
+
         try:
             with open(file_name, 'r') as f:
                 data = json.load(f)
             self.analysis_file_path = file_name
-            
+
             # Reset State
             self.samples = {} # Clear samples
-            
+
             # Load Detection Settings
             if "detection_method" in data:
                  self.detection_method = data["detection_method"]
@@ -2685,16 +2801,20 @@ class MainWindow(QMainWindow):
             for i, slot in enumerate(self.slots):
                 slot.set_relative_rf_display(self.relative_rf_display)
                 slot.set_range(self.plate_ranges.get(i, 0.05))
-            
+
             # Block signals on all image labels during loading to prevent
             # premature update_results_display calls (which would remove
             # substances from self.samples before their spots are loaded)
             for slot in self.slots:
                 slot.image_label.blockSignals(True)
-            
+                slot.support_lines_checkbox.blockSignals(True)
+                slot.support_lines_checkbox.setChecked(False)
+                slot.support_lines_checkbox.blockSignals(False)
+                slot.image_label.show_support_lines = False
+
             # Determine next sample id (max id + 1)
             max_sid = 0
-            
+
             # Restore Samples
             for sid_str, sdata in data.get("samples", {}).items():
                 sid = int(sid_str)
@@ -2730,9 +2850,9 @@ class MainWindow(QMainWindow):
                     'is_reference': sdata.get('is_reference', False),
                     'reference_rf': sdata.get('reference_rf')
                 }
-            
+
             self.next_sample_id = max_sid + 1
-            
+
             # Update Slots
             plates_data = data.get("plates", [])
             for plate_info in plates_data:
@@ -2742,17 +2862,22 @@ class MainWindow(QMainWindow):
                     path = plate_info.get("image_path")
                     start_y = plate_info.get("start_line_y", 0.9)
                     front_y = plate_info.get("front_line_y", 0.1)
+                    show_support_lines = bool(plate_info.get("show_support_lines", False))
                     spots = plate_info.get("spots", [])
-                    
+
                     if path and os.path.exists(path):
                         slot.image_path = path
                         pixmap = QPixmap(path)
                         if not pixmap.isNull():
                             slot.image_label.set_image(pixmap)
-                    
+
                     # Set Lines
                     slot.image_label.start_line_y = start_y
                     slot.image_label.front_line_y = front_y
+                    slot.support_lines_checkbox.blockSignals(True)
+                    slot.support_lines_checkbox.setChecked(show_support_lines)
+                    slot.support_lines_checkbox.blockSignals(False)
+                    slot.image_label.show_support_lines = show_support_lines
                     
                     # Set Spots
                     # Ensure spots have integer sample_id as saved
@@ -2764,19 +2889,19 @@ class MainWindow(QMainWindow):
                             'y': s['y']
                         })
                     slot.image_label.spots = safe_spots
-            
+
             # Unblock signals now that all data is loaded
             for slot in self.slots:
                 slot.image_label.blockSignals(False)
-            
+
             # Global Updates
             color_map = {k: v['color'] for k, v in self.samples.items()}
             for slot in self.slots:
                 slot.image_label.set_global_colors(color_map)
                 slot.image_label.update()
-                
+
             self.update_results_display()
-            
+
             # Update reference button colors based on loaded data
             # Re-aggregate to check which references are on all plates
             aggregated = {}
@@ -2789,7 +2914,7 @@ class MainWindow(QMainWindow):
                         aggregated[sid][i] = []
                     aggregated[sid][i].append(0)  # Just need to mark presence
             self._update_reference_button_colors(aggregated)
-            
+
         except Exception as e:
             print(f"Error loading file: {e}")
 
@@ -2918,7 +3043,7 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
         self.char_windows.clear()
-        
+
         # Close and clear all open detail windows
         for name, win in list(self.detail_windows.items()):
             try:
@@ -2930,7 +3055,7 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
         self.detail_windows.clear()
-            
+
         # Reset Slots
         for slot in self.slots:
             slot.image_path = None
@@ -2941,15 +3066,19 @@ class MainWindow(QMainWindow):
             slot.image_label.start_line_y = 0.9
             slot.image_label.front_line_y = 0.1
             slot.image_label.show_lines = False
+            slot.image_label.show_support_lines = False
+            slot.support_lines_checkbox.blockSignals(True)
+            slot.support_lines_checkbox.setChecked(False)
+            slot.support_lines_checkbox.blockSignals(False)
             slot.image_label.set_global_colors({})
             # Signal won't fire if lines aren't moved/set via setter that emits.
             # Let's forcefully emit or set text.
             slot.image_label.linesMoved.emit(0.1, 0.9) # Inverted: 1-0.9=0.1 start, 1-0.1=0.9 front
             slot.image_label.spotsChanged.emit([])
             slot.image_label.update()
-            
+
         self.update_results_display()
-        
+
     def load_reference_data(self):
         self.reference_data = []
         self.genus_to_substances = {}
@@ -2961,7 +3090,7 @@ class MainWindow(QMainWindow):
             db = QSqlDatabase.addDatabase("QSQLITE", "main_ref_connection")
 
         db.setDatabaseName(self.db_path)
-            
+
         if db.open():
             # Populate Genus Cache - try Lichens table first (new format)
             gen_query = QSqlQuery(db)
@@ -2984,7 +3113,7 @@ class MainWindow(QMainWindow):
                 if query.exec(f"SELECT name, A, Bprime, C, GroupName, Lichens, BefVis, BefUVS, BefUVL, AftVis, AftUV FROM {table}"):
                     while query.next():
                         name = query.value(0)
-                        
+
                         def parse_rf(val):
                             if val is None or val == "":
                                 return None
@@ -2992,7 +3121,7 @@ class MainWindow(QMainWindow):
                                 return float(val) / 100.0
                             except:
                                 return None
-                                
+
                         rf_a = parse_rf(query.value(1))
                         rf_b = parse_rf(query.value(2))
                         rf_c = parse_rf(query.value(3))
@@ -3003,7 +3132,7 @@ class MainWindow(QMainWindow):
                         bef_uvl = query.value(8)
                         aft_vis = query.value(9)
                         aft_uv = query.value(10)
-                        
+
                         self.reference_data.append({
                             'name': name,
                             'rf': [rf_a, rf_b, rf_c], # Matching slots 0, 1, 2
@@ -3015,7 +3144,7 @@ class MainWindow(QMainWindow):
                             'AftUV': aft_uv
                         })
             db.close()
-        
+
     def predict_matches(self, input_data, filter_group=None, filter_genus=None,
                         filter_vis=False, filter_uvs=False, filter_uvl=False,
                         filter_aft_vis=None, filter_aft_uv=None,
