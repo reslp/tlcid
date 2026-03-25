@@ -5,11 +5,50 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QSplitter)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QCloseEvent
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QCloseEvent, QIcon
 from urllib.parse import quote, unquote
+from pathlib import Path
 import html
 
 from gui.report_generator import PDFReportGenerator
+
+
+ICON_DIR = Path(__file__).resolve().parent / "icons"
+
+
+def _make_icon_button(icon_filename, tooltip_text, fallback_text):
+    button = QPushButton()
+    button.setToolTip(tooltip_text)
+    button.setAccessibleName(tooltip_text)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    icon = QIcon(str(ICON_DIR / icon_filename))
+    if icon.isNull():
+        # Fallback for environments without SVG icon support
+        button.setText(fallback_text)
+        button.setMinimumWidth(40)
+        button.setIconSize(QSize(24, 24))
+    else:
+        # Icon-only modern button (no default rectangular frame)
+        button.setIcon(icon)
+        button.setText("")
+        button.setFixedSize(40, 40)
+        button.setIconSize(QSize(32, 32))
+        button.setStyleSheet("""
+            QPushButton {
+                border: none;
+                background: transparent;
+                border-radius: 7px;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background: rgba(0, 0, 0, 0.5);
+            }
+            QPushButton:pressed {
+                background: rgba(0, 0, 0, 1);
+            }
+        """)
+    return button
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
@@ -412,12 +451,12 @@ class ImageSlot(QWidget):
         self.layout.addLayout(controls_layout)
 
         # Load Button
-        self.load_button = QPushButton("Load Image")
+        self.load_button = _make_icon_button("load_image.svg", "Load Image", "Load Image")
         self.load_button.clicked.connect(self.load_image)
         controls_layout.addWidget(self.load_button)
 
         # Export Button
-        self.export_button = QPushButton("Export Image")
+        self.export_button = _make_icon_button("export_image.svg", "Export Image", "Export Image")
         self.export_button.clicked.connect(self.export_marked_image)
         controls_layout.addWidget(self.export_button)
 

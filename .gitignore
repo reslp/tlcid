@@ -21,3 +21,4 @@ BUGFIX*
 .specify/
 specs/
 scripts/
+gui/icons/*.afdesign

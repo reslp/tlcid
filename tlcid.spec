@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=['.'],
     binaries=[],
-    datas=[('tlcid_database.db', '.'), ('VERSION', '.'), ('examples', 'examples'), ('icon.png', '.')],
+    datas=[('tlcid_database.db', '.'), ('VERSION', '.'), ('examples', 'examples'), ('icon.png', '.'), ('gui/icons', 'gui/icons')],
     hiddenimports=[
         'gui',
         'gui.mainwindow',
