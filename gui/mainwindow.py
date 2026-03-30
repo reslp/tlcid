@@ -500,9 +500,8 @@ class SquareImageContainer(QWidget):
 
     def resizeEvent(self, event):
         side = max(0, min(self.width(), self.height()))
-        x = (self.width() - side) // 2
-        y = (self.height() - side) // 2
-        self.image_label.setGeometry(x, y, side, side)
+        x = max(0, (self.width() - side) // 2)
+        self.image_label.setGeometry(x, 0, side, side)
         super().resizeEvent(event)
 
 
@@ -559,6 +558,7 @@ class ImageSlot(QWidget):
         # Title with Range SpinBox
         title_layout = QHBoxLayout()
         title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.addStretch()
 
         # Title label
         self.title_label = QLabel(title)
@@ -568,17 +568,7 @@ class ImageSlot(QWidget):
         font.setBold(True)
         self.title_label.setFont(font)
         title_layout.addWidget(self.title_label)
-
-        # Range SpinBox (per-plate)
-        self.relative_rf_display = True
-        self.range_spin = QDoubleSpinBox()
-        self.range_spin.setPrefix("±")
-        self.range_spin.setToolTip(f"Range tolerance for plate {title}")
-        self.range_spin.setMaximumWidth(80)  # Reduced width to 1/3 of previous (120/3)
-        self.range_spin.valueChanged.connect(self._on_range_changed)
-        self.set_relative_rf_display(True)
-        self.set_range(0.05)
-        title_layout.addWidget(self.range_spin)
+        title_layout.addStretch()
 
         self.layout.addLayout(title_layout)
 
@@ -588,32 +578,45 @@ class ImageSlot(QWidget):
         self.layout.addWidget(self.image_container, 1)
 
         # Controls
-        controls_layout = QHBoxLayout()
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.addLayout(controls_layout)
+        self.controls_layout = QHBoxLayout()
+        self.controls_layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.addLayout(self.controls_layout)
 
         # Load Button
         self.load_button = _make_icon_button("load_image.svg", "Load Image", "Load Image")
         self.load_button.clicked.connect(self.load_image)
-        controls_layout.addWidget(self.load_button)
+        self.controls_layout.addWidget(self.load_button)
 
         # Export Button
         self.export_button = _make_icon_button("export_image.svg", "Export Image", "Export Image")
         self.export_button.clicked.connect(self.export_marked_image)
-        controls_layout.addWidget(self.export_button)
+        self.controls_layout.addWidget(self.export_button)
 
         self.horizontal_line_button = _make_icon_button("horizontal_line.svg", "Add Horizontal Line", "Add H Line")
         self.horizontal_line_button.clicked.connect(self.add_horizontal_line)
-        controls_layout.addWidget(self.horizontal_line_button)
+        self.controls_layout.addWidget(self.horizontal_line_button)
 
         self.vertical_line_button = _make_icon_button("vertical_line.svg", "Add Vertical Line", "Add V Line")
         self.vertical_line_button.clicked.connect(self.add_vertical_line)
-        controls_layout.addWidget(self.vertical_line_button)
+        self.controls_layout.addWidget(self.vertical_line_button)
 
+        # Range SpinBox (per-plate)
+        self.relative_rf_display = True
+        self.range_spin = QDoubleSpinBox()
+        self.range_spin.setPrefix("±")
+        self.range_spin.setToolTip(f"Range tolerance for plate {title}")
+        self.range_spin.setMaximumWidth(80)
+        self.range_spin.valueChanged.connect(self._on_range_changed)
+        self.set_relative_rf_display(True)
+        self.set_range(0.05)
+        self.controls_layout.addWidget(self.range_spin)
+
+        # Support Lines Checkbox
+        self.controls_layout.addSpacing(12)
         self.support_lines_checkbox = QCheckBox("Support Lines")
         self.support_lines_checkbox.setChecked(False)
         self.support_lines_checkbox.toggled.connect(self._on_support_lines_toggled)
-        controls_layout.addWidget(self.support_lines_checkbox)
+        self.controls_layout.addWidget(self.support_lines_checkbox)
 
         self.set_custom_line_controls_enabled(False)
 
@@ -623,12 +626,13 @@ class ImageSlot(QWidget):
     def heightForWidth(self, width):
         margins = self.layout.contentsMargins()
         spacing = self.layout.spacing()
-        title_height = max(self.title_label.sizeHint().height(), self.range_spin.sizeHint().height())
+        title_height = self.title_label.sizeHint().height()
         controls_height = max(
             self.load_button.sizeHint().height(),
             self.export_button.sizeHint().height(),
             self.horizontal_line_button.sizeHint().height(),
             self.vertical_line_button.sizeHint().height(),
+            self.range_spin.sizeHint().height(),
             self.support_lines_checkbox.sizeHint().height(),
         )
         image_height = self.image_label.heightForWidth(width)
@@ -1089,6 +1093,16 @@ class MainWindow(QMainWindow):
 
         # Vertical splitter: plates on top, results table on bottom
         self.main_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.main_splitter.setHandleWidth(4)
+        self.main_splitter.setStyleSheet("""
+            QSplitter::handle:vertical {
+                background: #b0b0b0;
+                margin: 0 4px;
+            }
+            QSplitter::handle:vertical:hover {
+                background: #8f8f8f;
+            }
+        """)
 
         # Slots Area - wrap in a container widget for the splitter
         self.slots = []
