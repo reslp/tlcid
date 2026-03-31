@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QMessageBox, QDoubleSpinBox, QDialog, QCheckBox, QMenu, QWidget as QWidget2,
                              QSplitter)
 from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QCloseEvent, QIcon
 from urllib.parse import quote, unquote
 from pathlib import Path
@@ -17,6 +17,7 @@ ICON_DIR = Path(__file__).resolve().parent / "icons"
 CUSTOM_HORIZONTAL_LINE_COLOR = "#0065C1"
 CUSTOM_VERTICAL_LINE_COLOR = "#990000"
 CUSTOM_LINE_BASE_WIDTH = 1.5
+START_LINE_HINT_TEXT = "For best results, adjust start line position."
 
 
 def _make_icon_button(icon_filename, tooltip_text, fallback_text):
@@ -137,6 +138,7 @@ class SquareLabel(QLabel):
         self.custom_line_rf_label_provider = None
         self.custom_lines = []  # list of {'orientation': 'horizontal'|'vertical', 'position': float}
         self.dragged_custom_line_index = None
+        self.show_start_line_adjust_hint = False
 
     def set_global_colors(self, colors):
         self.global_colors = colors
@@ -204,9 +206,10 @@ class SquareLabel(QLabel):
             return Qt.CursorShape.SplitHCursor
         return Qt.CursorShape.SplitVCursor
 
-    def set_image(self, pixmap):
+    def set_image(self, pixmap, show_start_line_adjust_hint=True):
         self._original_pixmap = pixmap
         self.show_lines = True
+        self.show_start_line_adjust_hint = bool(show_start_line_adjust_hint)
         self.setText("")
         self.update_display()
         self.linesMoved.emit(1.0 - self.start_line_y, 1.0 - self.front_line_y)
@@ -259,6 +262,8 @@ class SquareLabel(QLabel):
              # Dragging a line (only when show_lines is True)
             if self.show_lines:
                 if self.dragged_line == "Start":
+                    if self.show_start_line_adjust_hint and abs(self.start_line_y - y_norm) > 1e-6:
+                        self.show_start_line_adjust_hint = False
                     self.start_line_y = y_norm
                 elif self.dragged_line == "Front":
                     self.front_line_y = y_norm
@@ -407,6 +412,20 @@ class SquareLabel(QLabel):
             painter.setPen(QPen(QColor("green"), 2))
             start_y = int(self.start_line_y * self.height())
             painter.drawLine(0, start_y, self.width(), start_y)
+
+            if self.show_start_line_adjust_hint:
+                font = painter.font()
+                font.setPointSize(max(9, font.pointSize()))
+                painter.setFont(font)
+                metrics = painter.fontMetrics()
+                text_height = metrics.height()
+                text_top = max(0, min(self.height() - text_height, start_y - text_height - 6))
+                painter.setPen(QPen(QColor("green"), 1))
+                painter.drawText(
+                    QRect(0, text_top, self.width(), text_height),
+                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                    START_LINE_HINT_TEXT,
+                )
 
             painter.setPen(QPen(QColor("red"), 2))
             front_y = int(self.front_line_y * self.height())
@@ -696,10 +715,10 @@ class ImageSlot(QWidget):
         self.horizontal_line_button.setEnabled(enabled)
         self.vertical_line_button.setEnabled(enabled)
 
-    def set_loaded_image(self, pixmap, image_path=None):
+    def set_loaded_image(self, pixmap, image_path=None, show_start_line_adjust_hint=True):
         if image_path is not None:
             self.image_path = image_path
-        self.image_label.set_image(pixmap)
+        self.image_label.set_image(pixmap, show_start_line_adjust_hint=show_start_line_adjust_hint)
         self.set_custom_line_controls_enabled(True)
 
     def add_horizontal_line(self):
@@ -3210,7 +3229,7 @@ class MainWindow(QMainWindow):
                     if path and os.path.exists(path):
                         pixmap = QPixmap(path)
                         if not pixmap.isNull():
-                            slot.set_loaded_image(pixmap, path)
+                            slot.set_loaded_image(pixmap, path, show_start_line_adjust_hint=False)
 
                     # Set Lines
                     slot.image_label.start_line_y = start_y
@@ -3427,6 +3446,7 @@ class MainWindow(QMainWindow):
             slot.image_label.front_line_y = 0.1
             slot.image_label.show_lines = False
             slot.image_label.show_support_lines = False
+            slot.image_label.show_start_line_adjust_hint = False
             slot.image_label.support_line_y_mapper = None
             slot.image_label.support_line_specs_provider = None
             slot.set_custom_line_controls_enabled(False)
