@@ -3017,10 +3017,22 @@ class MainWindow(QMainWindow):
 
                 ref_layout.addWidget(ref_checkbox)
                 self.results_table.setCellWidget(current_row, self.RESULTS_COL_REFERENCE, ref_container)
+
+                # Sort value: 0 = checked (reference) → appears first; 1 = unchecked → appears after
+                is_ref = self.samples[sid].get('is_reference', False)
+                ref_sort_item = SortableTableWidgetItem()
+                ref_sort_item.setData(Qt.ItemDataRole.UserRole, 0 if is_ref else 1)
+                ref_sort_item.setFlags(Qt.ItemFlag.NoItemFlags)
+                self.results_table.setItem(current_row, self.RESULTS_COL_REFERENCE, ref_sort_item)
             else:
                 empty_label = QLabel()
                 empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.results_table.setCellWidget(current_row, self.RESULTS_COL_REFERENCE, empty_label)
+
+                ref_sort_item = SortableTableWidgetItem()
+                ref_sort_item.setData(Qt.ItemDataRole.UserRole, 2)  # Non-reference rows sort last
+                ref_sort_item.setFlags(Qt.ItemFlag.NoItemFlags)
+                self.results_table.setItem(current_row, self.RESULTS_COL_REFERENCE, ref_sort_item)
 
             # 5. All Results Button
             # Show button only for regular substances (sid > 0) with predictions
