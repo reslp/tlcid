@@ -599,6 +599,8 @@ class ImageSlot(QWidget):
         # Controls
         self.controls_layout = QHBoxLayout()
         self.controls_layout.setContentsMargins(0, 0, 0, 0)
+        self.controls_layout.setSpacing(0) # reduce space between elements to 0
+        self.controls_layout.setAlignment(Qt.AlignmentFlag.AlignCenter) # center whole group
         self.layout.addLayout(self.controls_layout)
 
         # Load Button
