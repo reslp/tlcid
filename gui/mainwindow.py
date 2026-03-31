@@ -1,8 +1,8 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QLabel, QPushButton, QFileDialog, QSizePolicy, QComboBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QColorDialog,
-                             QMessageBox, QDoubleSpinBox, QDialog, QCheckBox, QMenu, QWidget as QWidget2,
-                             QSplitter)
+                             QMessageBox, QDoubleSpinBox, QDialog, QCheckBox, QMenu, QToolButton,
+                             QWidget as QWidget2, QSplitter)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QCloseEvent, QIcon
@@ -630,12 +630,31 @@ class ImageSlot(QWidget):
         self.set_range(0.05)
         self.controls_layout.addWidget(self.range_spin)
 
-        # Support Lines Checkbox
+        # View dropdown (Support Lines + Show Rf classes)
         self.controls_layout.addSpacing(12)
-        self.support_lines_checkbox = QCheckBox("Support Lines")
-        self.support_lines_checkbox.setChecked(False)
-        self.support_lines_checkbox.toggled.connect(self._on_support_lines_toggled)
-        self.controls_layout.addWidget(self.support_lines_checkbox)
+        self._view_button = QToolButton()
+        self._view_button.setStyleSheet("""
+        QToolButton::menu-indicator { width: 0px; }
+        """)
+        self._view_button.setText("Options ▼")
+        self._view_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._view_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._view_button.setToolTip("Toggle plate overlays")
+        _view_menu = QMenu(self._view_button)
+        self._action_support_lines = QAction("Support Lines", self)
+        self._action_support_lines.setCheckable(True)
+        self._action_support_lines.triggered.connect(self._on_support_lines_action_toggled)
+        _view_menu.addAction(self._action_support_lines)
+        self._action_rf_classes = QAction("Show Rf classes", self)
+        self._action_rf_classes.setCheckable(True)
+        self._action_rf_classes.triggered.connect(self._on_rf_classes_action_toggled)
+        _view_menu.addAction(self._action_rf_classes)
+        _view_menu.addSeparator()
+        _action_clear = QAction("Clear", self)
+        _action_clear.triggered.connect(self._on_view_clear)
+        _view_menu.addAction(_action_clear)
+        self._view_button.setMenu(_view_menu)
+        self.controls_layout.addWidget(self._view_button)
 
         self.set_custom_line_controls_enabled(False)
 
@@ -652,7 +671,7 @@ class ImageSlot(QWidget):
             self.horizontal_line_button.sizeHint().height(),
             self.vertical_line_button.sizeHint().height(),
             self.range_spin.sizeHint().height(),
-            self.support_lines_checkbox.sizeHint().height(),
+            self._view_button.sizeHint().height(),
         )
         image_height = self.image_label.heightForWidth(width)
         return (
@@ -702,13 +721,33 @@ class ImageSlot(QWidget):
         value = self.range_spin.value()
         return value / 100.0 if self.relative_rf_display else value
 
-    def _on_support_lines_toggled(self, checked):
+    def _on_support_lines_action_toggled(self, checked):
         self.image_label.show_support_lines = checked
         main_window = self.window()
         if hasattr(main_window, 'update_results_display'):
             main_window.update_results_display()
         else:
             self.image_label.update()
+
+    def _on_rf_classes_action_toggled(self, checked):
+        main_window = self.window()
+        if hasattr(main_window, 'set_display_rf_classes'):
+            main_window.set_display_rf_classes(checked)
+
+    def _on_view_clear(self):
+        self._action_support_lines.setChecked(False)
+        self._action_rf_classes.setChecked(False)
+        self._on_support_lines_action_toggled(False)
+        self._on_rf_classes_action_toggled(False)
+
+    def set_support_lines_checked(self, checked):
+        """Set support lines checked state and apply side effects."""
+        self._action_support_lines.setChecked(checked)
+        self._on_support_lines_action_toggled(checked)
+
+    def set_rf_classes_action_checked(self, checked):
+        """Update the rf classes action checked state without triggering the handler."""
+        self._action_rf_classes.setChecked(checked)
 
     def set_custom_line_controls_enabled(self, enabled):
         self.export_button.setEnabled(enabled)
@@ -2118,6 +2157,7 @@ class MainWindow(QMainWindow):
             self._rf_classes_missing_popup_shown = False
         for slot in self.slots:
             slot.set_relative_rf_display(relative_rf)
+            slot.set_rf_classes_action_checked(display_rf_classes)
         self.update_detection_status_label()
 
         # Keep settings window controls synchronized when open
@@ -2130,6 +2170,19 @@ class MainWindow(QMainWindow):
                 display_rf_classes,
             )
 
+        self.update_results_display()
+
+    def set_display_rf_classes(self, checked):
+        """Toggle the global rf-classes overlay and keep all slot menus and the settings window in sync."""
+        self.display_rf_classes = checked
+        if not checked:
+            self._rf_classes_missing_popup_shown = False
+        if hasattr(self, 'settings_window') and self.settings_window is not None:
+            self.settings_window.display_rf_classes_checkbox.blockSignals(True)
+            self.settings_window.display_rf_classes_checkbox.setChecked(checked)
+            self.settings_window.display_rf_classes_checkbox.blockSignals(False)
+        for slot in self.slots:
+            slot.set_rf_classes_action_checked(checked)
         self.update_results_display()
 
     def sample_allows_missing_rf_values(self, sid):
@@ -2365,10 +2418,10 @@ class MainWindow(QMainWindow):
         if self._rf_classes_missing_popup_shown:
             return
         self._rf_classes_missing_popup_shown = True
-        QMessageBox.information(
+        QMessageBox.warning(
             self,
             "Rf classes unavailable",
-            "Display Rf classes requires Atranorin and Norstictic Acid to be marked as references on the plate(s). Falling back to the normal support-line display until both references are available.",
+            "Atranorin and Norstictic Acid have to be references to use Rf classes.",
         )
 
     def _apply_support_line_mapping(self, active_standards, rf_class_reference_positions=None):
@@ -3163,9 +3216,7 @@ class MainWindow(QMainWindow):
             # substances from self.samples before their spots are loaded)
             for slot in self.slots:
                 slot.image_label.blockSignals(True)
-                slot.support_lines_checkbox.blockSignals(True)
-                slot.support_lines_checkbox.setChecked(False)
-                slot.support_lines_checkbox.blockSignals(False)
+                slot._action_support_lines.setChecked(False)
                 slot.image_label.show_support_lines = False
                 slot.image_label.custom_lines = []
                 slot.set_custom_line_controls_enabled(False)
@@ -3234,9 +3285,7 @@ class MainWindow(QMainWindow):
                     # Set Lines
                     slot.image_label.start_line_y = start_y
                     slot.image_label.front_line_y = front_y
-                    slot.support_lines_checkbox.blockSignals(True)
-                    slot.support_lines_checkbox.setChecked(show_support_lines)
-                    slot.support_lines_checkbox.blockSignals(False)
+                    slot._action_support_lines.setChecked(show_support_lines)
                     slot.image_label.show_support_lines = show_support_lines
                     safe_custom_lines = []
                     for line in custom_lines:
@@ -3450,9 +3499,7 @@ class MainWindow(QMainWindow):
             slot.image_label.support_line_y_mapper = None
             slot.image_label.support_line_specs_provider = None
             slot.set_custom_line_controls_enabled(False)
-            slot.support_lines_checkbox.blockSignals(True)
-            slot.support_lines_checkbox.setChecked(False)
-            slot.support_lines_checkbox.blockSignals(False)
+            slot._action_support_lines.setChecked(False)
             slot.image_label.set_global_colors({})
             # Signal won't fire if lines aren't moved/set via setter that emits.
             # Let's forcefully emit or set text.
