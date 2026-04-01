@@ -198,6 +198,7 @@ class PredictionResultsWindow(QDialog):
             self.plate_data,
             filter_group=sample.get('filter_group'),
             filter_genus=sample.get('filter_genus'),
+            filter_family=sample.get('filter_family'),
             filter_vis=sample.get('filter_vis', False),
             filter_uvs=sample.get('filter_uvs', False),
             filter_uvl=sample.get('filter_uvl', False),

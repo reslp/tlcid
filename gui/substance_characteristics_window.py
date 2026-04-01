@@ -3,10 +3,10 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtSql import QSqlQuery
 
 class SubstanceCharacteristicsWindow(QDialog):
-    # sample_id, group_name, genus, bef_vis, bef_uvs, bef_uvl, aft_vis, aft_uv, assigned_name, show_on_plate, font_size
-    filterChanged = pyqtSignal(int, str, str, bool, bool, bool, str, str, str, bool, int)
+    # sample_id, group_name, genus, family, bef_vis, bef_uvs, bef_uvl, aft_vis, aft_uv, assigned_name, show_on_plate, font_size
+    filterChanged = pyqtSignal(int, str, str, str, bool, bool, bool, str, str, str, bool, int)
 
-    def __init__(self, sample_id, sample_name, current_group, current_genus,
+    def __init__(self, sample_id, sample_name, current_group, current_genus, current_family,
                  current_vis, current_uvs, current_uvl,
                  current_aft_vis, current_aft_uv, assigned_name, candidates, show_on_plate, font_size, db):
         super().__init__()
@@ -36,6 +36,16 @@ class SubstanceCharacteristicsWindow(QDialog):
         self.load_genera(current_genus)
         self.combo_genus.currentIndexChanged.connect(self.on_change)
         layout.addWidget(self.combo_genus)
+
+        # Family Filter
+        label_family = QLabel("Filter by Lichen Family:")
+        layout.addWidget(label_family)
+
+        self.combo_family = QComboBox()
+        self.combo_family.addItem("All Families", None)
+        self.load_families(current_family)
+        self.combo_family.currentIndexChanged.connect(self.on_change)
+        layout.addWidget(self.combo_family)
 
         # Visual Characteristics (Before Treatment)
         layout.addWidget(QLabel("Visual Characteristics (Before Treatment):"))
@@ -152,6 +162,24 @@ class SubstanceCharacteristicsWindow(QDialog):
             if index >= 0:
                 self.combo_genus.setCurrentIndex(index)
 
+    def load_families(self, current_family):
+        query = QSqlQuery(self.db)
+        family_set = set()
+        if query.exec("SELECT DISTINCT Family FROM Lichens ORDER BY Family"):
+            while query.next():
+                family = query.value(0)
+                if family:
+                    family_set.add(family)
+
+        sorted_families = sorted(list(family_set))
+        for family in sorted_families:
+            self.combo_family.addItem(family, family)
+
+        if current_family:
+            index = self.combo_family.findData(current_family)
+            if index >= 0:
+                self.combo_family.setCurrentIndex(index)
+
     def load_aft_vis(self, current_val):
         query = QSqlQuery(self.db)
         if query.exec("SELECT DISTINCT AftVis FROM Substances ORDER BY AftVis"):
@@ -181,6 +209,7 @@ class SubstanceCharacteristicsWindow(QDialog):
     def on_change(self):
         group_data = self.combo_group.currentData()
         genus_data = self.combo_genus.currentData()
+        family_data = self.combo_family.currentData()
         is_vis = self.check_vis.isChecked()
         is_uvs = self.check_uvs.isChecked()
         is_uvl = self.check_uvl.isChecked()
@@ -194,6 +223,6 @@ class SubstanceCharacteristicsWindow(QDialog):
         show_on_plate = self.check_show_name.isChecked()
         font_size = self.spin_font_size.value()
 
-        self.filterChanged.emit(self.sample_id, group_data, genus_data,
+        self.filterChanged.emit(self.sample_id, group_data, genus_data, family_data,
                                 is_vis, is_uvs, is_uvl,
                                 aft_vis, aft_uv, assigned_name, show_on_plate, font_size)

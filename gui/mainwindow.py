@@ -1752,6 +1752,7 @@ class MainWindow(QMainWindow):
         sample_name = self.samples[sid]['name']
         current_group = self.samples[sid].get('filter_group')
         current_genus = self.samples[sid].get('filter_genus')
+        current_family = self.samples[sid].get('filter_family')
 
         current_vis = self.samples[sid].get('filter_vis', False)
         current_uvs = self.samples[sid].get('filter_uvs', False)
@@ -1770,7 +1771,7 @@ class MainWindow(QMainWindow):
             self.char_windows[sid].activateWindow()
             return
 
-        window = SubstanceCharacteristicsWindow(sid, sample_name, current_group, current_genus,
+        window = SubstanceCharacteristicsWindow(sid, sample_name, current_group, current_genus, current_family,
                                                 current_vis, current_uvs, current_uvl,
                                                 current_aft_vis, current_aft_uv,
                                                 assigned_name, candidates, show_on_plate, font_size, db)
@@ -1799,10 +1800,11 @@ class MainWindow(QMainWindow):
         for slot in self.slots:
             slot.image_label.set_highlighted_samples(open_sids)
 
-    def set_sample_filter(self, sid, group_name, genus, is_vis, is_uvs, is_uvl, aft_vis, aft_uv, assigned_name, show_on_plate, font_size):
+    def set_sample_filter(self, sid, group_name, genus, family, is_vis, is_uvs, is_uvl, aft_vis, aft_uv, assigned_name, show_on_plate, font_size):
         if sid in self.samples:
             self.samples[sid]['filter_group'] = group_name
             self.samples[sid]['filter_genus'] = genus
+            self.samples[sid]['filter_family'] = family
             self.samples[sid]['filter_vis'] = is_vis
             self.samples[sid]['filter_uvs'] = is_uvs
             self.samples[sid]['filter_uvl'] = is_uvl
@@ -2720,6 +2722,7 @@ class MainWindow(QMainWindow):
             current_substance_group = self.samples[sid].get('filter_group')
             current_filter = current_substance_group
             current_genus = self.samples[sid].get('filter_genus')
+            current_family = self.samples[sid].get('filter_family')
 
             # Collect calibration info for this substance
             calibration_info = []
@@ -2901,6 +2904,7 @@ class MainWindow(QMainWindow):
                 current_substance_group = self.samples[sid].get('filter_group')
                 current_filter = current_substance_group
                 current_genus = self.samples[sid].get('filter_genus')
+                current_family = self.samples[sid].get('filter_family')
                 f_vis = self.samples[sid].get('filter_vis', False)
                 f_uvs = self.samples[sid].get('filter_uvs', False)
                 f_uvl = self.samples[sid].get('filter_uvl', False)
@@ -2910,6 +2914,7 @@ class MainWindow(QMainWindow):
                 matches = self.predict_matches(prediction_input,
                                                filter_group=current_filter,
                                                filter_genus=current_genus,
+                                               filter_family=current_family,
                                                filter_vis=f_vis,
                                                filter_uvs=f_uvs,
                                                filter_uvl=f_uvl,
@@ -2933,6 +2938,7 @@ class MainWindow(QMainWindow):
             # Guard against unset/non-string values while preserving visible active filters
             current_filter = current_filter or ""
             current_genus = current_genus or ""
+            current_family = current_family or ""
             f_vis = bool(self.samples[sid].get('filter_vis', False))
             f_uvs = bool(self.samples[sid].get('filter_uvs', False))
             f_uvl = bool(self.samples[sid].get('filter_uvl', False))
@@ -2944,6 +2950,8 @@ class MainWindow(QMainWindow):
                 filter_tags += f" <small style='color:gray'>[{current_filter}]</small>"
             if current_genus:
                 filter_tags += f" <small style='color:gray'>[Genus: {current_genus}]</small>"
+            if current_family:
+                filter_tags += f" <small style='color:gray'>[Family: {current_family}]</small>"
             if f_vis:
                 filter_tags += " <small style='color:gray'>[Vis]</small>"
             if f_uvs:
@@ -3143,6 +3151,7 @@ class MainWindow(QMainWindow):
                 "show_on_plate": sdata.get('show_on_plate', False),
                 "filter_group": sdata.get('filter_group'),
                 "filter_genus": sdata.get('filter_genus'),
+                "filter_family": sdata.get('filter_family'),
                 "filter_vis": sdata.get('filter_vis', False),
                 "filter_uvs": sdata.get('filter_uvs', False),
                 "filter_uvl": sdata.get('filter_uvl', False),
@@ -3265,6 +3274,7 @@ class MainWindow(QMainWindow):
                     'show_on_plate': sdata.get('show_on_plate', False),
                     'filter_group': sdata.get('filter_group'),
                     'filter_genus': sdata.get('filter_genus'),
+                    'filter_family': sdata.get('filter_family'),
                     'filter_vis': sdata.get('filter_vis', False),
                     'filter_uvs': sdata.get('filter_uvs', False),
                     'filter_uvl': sdata.get('filter_uvl', False),
@@ -3526,6 +3536,7 @@ class MainWindow(QMainWindow):
     def load_reference_data(self):
         self.reference_data = []
         self.genus_to_substances = {}
+        self.family_to_substances = {}
         from PyQt6.QtSql import QSqlDatabase, QSqlQuery
 
         if QSqlDatabase.contains("main_ref_connection"):
@@ -3538,17 +3549,23 @@ class MainWindow(QMainWindow):
         if db.open():
             # Populate Genus Cache - try Lichens table first (new format)
             gen_query = QSqlQuery(db)
-            if gen_query.exec("SELECT DISTINCT Genus, Substance FROM Lichens"):
+            if gen_query.exec("SELECT DISTINCT Genus, Family, Substance FROM Lichens"):
                 while gen_query.next():
                     g = gen_query.value(0)
-                    s = gen_query.value(1)
-                    if g not in self.genus_to_substances:
-                        self.genus_to_substances[g] = set()
-                    self.genus_to_substances[g].add(s.lower())
-                print(f"DEBUG: Loaded {len(self.genus_to_substances)} genera with genus-to-substance mappings from Lichens table")
+                    f = gen_query.value(1)
+                    s = gen_query.value(2)
+                    if g:
+                        if g not in self.genus_to_substances:
+                            self.genus_to_substances[g] = set()
+                        self.genus_to_substances[g].add(s.lower())
+                    if f:
+                        if f not in self.family_to_substances:
+                            self.family_to_substances[f] = set()
+                        self.family_to_substances[f].add(s.lower())
+                print(f"DEBUG: Loaded {len(self.genus_to_substances)} genera and {len(self.family_to_substances)} families with substance mappings from Lichens table")
             else:
-                # If Lichens table query failed or returned no results, warn about missing genus support
-                print(f"DEBUG: Warning - Lichens table not available or empty. Genus filtering will not work.")
+                # If Lichens table query failed or returned no results, warn about missing genus/family support
+                print(f"DEBUG: Warning - Lichens table not available or empty. Genus/family filtering will not work.")
 
             tables = ["Substances", "SubstancesBackup"]
             for table in tables:
@@ -3589,7 +3606,7 @@ class MainWindow(QMainWindow):
                         })
             db.close()
 
-    def predict_matches(self, input_data, filter_group=None, filter_genus=None,
+    def predict_matches(self, input_data, filter_group=None, filter_genus=None, filter_family=None,
                         filter_vis=False, filter_uvs=False, filter_uvl=False,
                         filter_aft_vis=None, filter_aft_uv=None,
                         allow_missing_rf_values=False):
@@ -3610,6 +3627,12 @@ class MainWindow(QMainWindow):
             # Filter by Genus (Optimized using Lichens table mapping)
             if filter_genus:
                 valid_subs = self.genus_to_substances.get(filter_genus, set())
+                if name.lower() not in valid_subs:
+                    continue
+
+            # Filter by Family (Optimized using Lichens table mapping)
+            if filter_family:
+                valid_subs = self.family_to_substances.get(filter_family, set())
                 if name.lower() not in valid_subs:
                     continue
 
