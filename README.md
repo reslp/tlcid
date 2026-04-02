@@ -14,12 +14,14 @@ TLCid is a desktop application for analyzing TLC (Thin Layer Chromatography) pla
 
 - **Multi-plate support**: Analyze up to 3 TLC plates (A, B', C) side-by-side
 - **Rf calculation**: Automatic calculation with linear interpolation calibration using reference standards
-- **Substance prediction**: Match spots against a database of 500+ lichen substances
+- **Substance prediction**: Match spots against a database of 800+ lichen substances
 - **Species prediction**: Identify lichen species based on substance profiles
-- **Visual filtering**: Filter predictions by genus, UV characteristics, and more
-- **Export**: Save annotated plate images and analysis state (JSON)
+- **Visual filtering**: Filter predictions by genus, family, UV characteristics, and more
+- **Export**: Save annotated plate images and analysis state (JSON) and export whole analyses as PDFs
 
 ## Installation
+
+Best, go to the release page and download the latest release. There is usually no need to build the project from source.
 
 ### Prerequisites
 
@@ -84,7 +86,6 @@ The bundle will be at `dist/linux/TLCid/`.
   <img src="screenshot.png" alt="Screenshot" width="90%">
 </p>
 
-
 1. **Load plate images** using the "Load Image" buttons
 2. **Set reference lines**: Click and drag the green start/front lines to mark solvent boundaries
 3. **Mark reference standards** (optional): Use Atranorin/Norstictic acid spots for calibration
@@ -92,21 +93,4 @@ The bundle will be at `dist/linux/TLCid/`.
 5. **View predictions**: Results appear in the right panel with candidate substances
 6. **Refine matches**: Use the characteristics window to filter by genus, UV response, etc.
 7. **Predict species**: Use Analysis → Predict species to identify lichens from the substance profile
-
-## Project Structure
-
-```
-tlcid/
-├── main.py              # Application entry point
-├── gui/                 # PyQt6 interface modules
-│   ├── mainwindow.py    # Main analysis window
-│   ├── database_window.py
-│   ├── prediction_results_window.py
-│   ├── settings_window.py
-│   ├── species_prediction_window.py
-│   └── substance_characteristics_window.py
-├── tlcid_database.db       # Reference substance database (picked up during release build)
-├── examples/            # Sample TLC plate images
-└── tlcid.spec           # PyInstaller build spec
-```
 
