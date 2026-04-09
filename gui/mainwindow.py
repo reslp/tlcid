@@ -1482,7 +1482,7 @@ class MainWindow(QMainWindow):
         analysis_menu.addAction(generate_report_action)
 
         # Reference Menu
-        ref_menu = menu_bar.addMenu("Reference")
+        ref_menu = menu_bar.addMenu("Databases")
 
         tables = ["Lichens", "Substances"]
         for table in tables:

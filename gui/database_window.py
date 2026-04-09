@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableView, QMessageBox, QHeaderView, QLineEdit, QLabel
-from PyQt6.QtSql import QSqlDatabase, QSqlTableModel
+from PyQt6.QtSql import QSqlDatabase, QSqlTableModel, QSqlQueryModel
 from PyQt6.QtCore import Qt
 import os
 
@@ -20,6 +20,9 @@ class DatabaseTableWindow(QWidget):
         self.search_input.textChanged.connect(self.filter_data)
         self.layout.addWidget(self.search_input)
         
+        # Flag set by _configure_lichens_view to switch filter logic
+        self._lichens_mode = False
+
         self.setup_database()
         self.setup_ui()
         
@@ -27,14 +30,34 @@ class DatabaseTableWindow(QWidget):
         self.update_search_placeholder()
 
     def update_search_placeholder(self):
+        if self._lichens_mode:
+            self.search_input.setPlaceholderText("Search by Lichen, Substance, Genus, Family...")
+            return
         cols = []
         for col in ["name", "Lichen", "Substance", "Genus"]:
             if self.model.fieldIndex(col) != -1:
                 cols.append(col)
         if cols:
-            self.search_input.setPlaceholderText(f"Search by {', '.join(cols)}...")
+            self.search_input.setPlaceholderText(f"Search by {', '.join(cols)}")
 
     def filter_data(self, text):
+        if self._lichens_mode:
+            # QSqlQueryModel: rebuild the aggregated query with a HAVING filter
+            self.model.setQuery(self._lichens_query(text), self.db)
+            col_labels = {
+                "Lichen": "Lichen",
+                "Substance": "Substance",
+                "Genus": "Genus",
+                "Family": "Family",
+                "FamilyReference": "Family Reference",
+                "SubstancesReference": "Substance Reference",
+            }
+            for visual_idx, col in enumerate(getattr(self, "_lichens_projected", [])):
+                self.model.setHeaderData(
+                    visual_idx, Qt.Orientation.Horizontal, col_labels.get(col, col)
+                )
+            return
+
         if not text:
             self.model.setFilter("")
         else:
@@ -90,6 +113,8 @@ class DatabaseTableWindow(QWidget):
         # Custom column order/width for Substances table
         if self.table_name == "Substances":
             self._configure_substances_columns()
+        elif self.table_name == "Lichens":
+            self._configure_lichens_view()
         
         self.layout.addWidget(self.view)
 
@@ -125,10 +150,116 @@ class DatabaseTableWindow(QWidget):
             current_width = self.view.columnWidth(name_idx)
             self.view.setColumnWidth(name_idx, max(60, int(current_width * (2 / 3))))
 
+        # Equalise width of B' column with the other Rf-value columns
+        rf_cols = ["A", "B", "Bprime", "C", "E", "F", "G"]
+        rf_widths = []
+        for col in rf_cols:
+            idx = self.model.fieldIndex(col)
+            if idx != -1:
+                rf_widths.append(self.view.columnWidth(idx))
+        if rf_widths:
+            target_width = min(rf_widths)
+            for col in rf_cols:
+                idx = self.model.fieldIndex(col)
+                if idx != -1:
+                    self.view.setColumnWidth(idx, target_width)
+
         bprime_idx = self.model.fieldIndex("Bprime")
         if bprime_idx != -1:
             self.model.setHeaderData(bprime_idx, Qt.Orientation.Horizontal, "B'")
         
+    # ------------------------------------------------------------------
+    # Lichens helpers
+    # ------------------------------------------------------------------
+
+    def _lichens_available_columns(self):
+        """Return the list of column names present in the Lichens table."""
+        record = self.db.record("Lichens")
+        return [record.fieldName(i) for i in range(record.count())]
+
+    def _lichens_query(self, filter_text=""):
+        """Return a GROUP_CONCAT aggregation query for the Lichens table.
+
+        - ``Substance`` and (if present) ``SubstancesReference`` are
+          aggregated with GROUP_CONCAT so multiple rows per species are
+          collapsed into one.  DISTINCT is used for SubstancesReference to
+          avoid repeating the same source tag.
+        - ``Genus``, ``Family``, and ``FamilyReference`` (when present) are
+          constant per species and are retrieved with MIN().
+        - When *filter_text* is given the result is filtered via a HAVING
+          clause that checks the Lichen name, the aggregated Substance string,
+          and (if available) Genus / Family.
+        """
+        available = self._lichens_available_columns()
+
+        select_parts = [
+            "Lichen",
+            "GROUP_CONCAT(Substance, ', ') AS Substance",
+        ]
+        # Stable per-species columns – use MIN() to satisfy GROUP BY
+        for col in ("Genus", "Family", "FamilyReference"):
+            if col in available:
+                select_parts.append(f"MIN({col}) AS {col}")
+        # Reference column that can differ per substance row – deduplicate
+        if "SubstancesReference" in available:
+            select_parts.append(
+                "GROUP_CONCAT(DISTINCT SubstancesReference) AS SubstancesReference"
+            )
+
+        q = f"SELECT {', '.join(select_parts)} FROM Lichens GROUP BY Lichen"
+
+        if filter_text:
+            safe = filter_text.replace("'", "''")
+            having_parts = [
+                f"Lichen LIKE '%{safe}%'",
+                f"Substance LIKE '%{safe}%'",
+            ]
+            if "Genus" in available:
+                having_parts.append(f"Genus LIKE '%{safe}%'")
+            if "Family" in available:
+                having_parts.append(f"Family LIKE '%{safe}%'")
+            q += " HAVING " + " OR ".join(having_parts)
+
+        q += " ORDER BY Lichen"
+        return q
+
+    def _configure_lichens_view(self):
+        """Replace the plain table model with an aggregated query model so
+        that each species is shown as a single row with all its substances
+        combined in the Substance column."""
+        self._lichens_mode = True
+
+        available = self._lichens_available_columns()
+
+        self.model = QSqlQueryModel(self)
+        self.model.setQuery(self._lichens_query(), self.db)
+
+        # Apply friendly header labels for all projected columns
+        col_labels = {
+            "Lichen": "Lichen",
+            "Substance": "Substance",
+            "Genus": "Genus",
+            "Family": "Family",
+            "FamilyReference": "Family Reference",
+            "SubstancesReference": "Substance Reference",
+        }
+        # Build the ordered list of columns the query actually projects
+        projected = ["Lichen", "Substance"]
+        for col in ("Genus", "Family", "FamilyReference"):
+            if col in available:
+                projected.append(col)
+        if "SubstancesReference" in available:
+            projected.append("SubstancesReference")
+
+        self._lichens_projected = projected  # store for filter refresh
+        for visual_idx, col in enumerate(projected):
+            self.model.setHeaderData(
+                visual_idx, Qt.Orientation.Horizontal, col_labels.get(col, col)
+            )
+
+        self.view.setModel(self.model)
+        self.view.resizeColumnsToContents()
+
     def closeEvent(self, event):
         # Optional: cleanup or hide
         if self.db.isOpen():
