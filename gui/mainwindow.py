@@ -1764,6 +1764,7 @@ class MainWindow(QMainWindow):
         candidates = self.samples[sid].get('last_matches', [])
         show_on_plate = self.samples[sid].get('show_on_plate', False)
         font_size = self.samples[sid].get('font_size', 8)
+        current_color = self.samples[sid].get('color', QColor("white"))
 
         # Unique key? sid is unique.
         if sid in self.char_windows and self.char_windows[sid].isVisible():
@@ -1774,7 +1775,7 @@ class MainWindow(QMainWindow):
         window = SubstanceCharacteristicsWindow(sid, sample_name, current_group, current_genus, current_family,
                                                 current_vis, current_uvs, current_uvl,
                                                 current_aft_vis, current_aft_uv,
-                                                assigned_name, candidates, show_on_plate, font_size, db)
+                                                assigned_name, candidates, show_on_plate, font_size, current_color, db)
         window.filterChanged.connect(self.set_sample_filter)
         window.finished.connect(lambda: self.on_characteristics_window_closed(sid))
         self.char_windows[sid] = window
@@ -1800,7 +1801,7 @@ class MainWindow(QMainWindow):
         for slot in self.slots:
             slot.image_label.set_highlighted_samples(open_sids)
 
-    def set_sample_filter(self, sid, group_name, genus, family, is_vis, is_uvs, is_uvl, aft_vis, aft_uv, assigned_name, show_on_plate, font_size):
+    def set_sample_filter(self, sid, group_name, genus, family, is_vis, is_uvs, is_uvl, aft_vis, aft_uv, assigned_name, show_on_plate, font_size, spot_color):
         if sid in self.samples:
             self.samples[sid]['filter_group'] = group_name
             self.samples[sid]['filter_genus'] = genus
@@ -1813,6 +1814,15 @@ class MainWindow(QMainWindow):
             self.samples[sid]['assigned_name'] = assigned_name
             self.samples[sid]['show_on_plate'] = show_on_plate
             self.samples[sid]['font_size'] = font_size
+
+            color = QColor(spot_color)
+            if color.isValid():
+                self.samples[sid]['color'] = color
+                color_map = {sample_id: data['color'] for sample_id, data in self.samples.items() if data.get('color') is not None}
+                for slot in self.slots:
+                    slot.image_label.set_global_colors(color_map)
+                    slot.image_label.update()
+
             self.update_results_display()
 
     def ensure_single_mode(self, active_btn):
