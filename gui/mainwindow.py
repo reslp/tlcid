@@ -1968,6 +1968,24 @@ class MainWindow(QMainWindow):
         text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(text_label)
 
+        attribution_text = (
+            'Chemical substance data is based on Elix 2022 - A catalogue of standardized '
+            'chromatographic data and biosynthetic relationships for lichen substances '
+            '(6th edition). \n\nOccurrence data of substances in lichens is based on:\n '
+            'Nimis P.L., 2026. ITALIC - The Information System on Italian Lichens. '
+            'Version 8.0. University of Trieste, Dept. of Biology, '
+            '(https://dryades.units.it/italic) and \nLIAS 1995–2026. A Global Information '
+            'System for Lichenized and Non-Lichenized Ascomycetes: www.lias.net.\n\n '
+            'Lichen taxonomy is based on: \nGBIF Secretariat (2023). GBIF Backbone '
+            'Taxonomy. Checklist dataset https://doi.org/10.15468/39omei accessed via '
+            'GBIF.org.'
+        )
+        attribution_label = QLabel(attribution_text)
+        attribution_label.setWordWrap(True)
+        attribution_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        attribution_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(attribution_label)
+
         close_button = QPushButton("Close")
         close_button.clicked.connect(dialog.accept)
         close_layout = QHBoxLayout()
