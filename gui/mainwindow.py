@@ -724,6 +724,7 @@ class ImageSlot(QWidget):
         return value / 100.0 if self.relative_rf_display else value
 
     def _on_support_lines_action_toggled(self, checked):
+        """Toggle support lines for this plate only."""
         self.image_label.show_support_lines = checked
         main_window = self.window()
         if hasattr(main_window, 'update_results_display'):
@@ -732,9 +733,12 @@ class ImageSlot(QWidget):
             self.image_label.update()
 
     def _on_rf_classes_action_toggled(self, checked):
+        """Toggle Rf classes for this plate only."""
         main_window = self.window()
-        if hasattr(main_window, 'set_display_rf_classes'):
-            main_window.set_display_rf_classes(checked)
+        if hasattr(main_window, 'update_results_display'):
+            main_window.update_results_display()
+        else:
+            self.image_label.update()
 
     def _on_view_clear(self):
         self._action_support_lines.setChecked(False)
@@ -747,9 +751,21 @@ class ImageSlot(QWidget):
         self._action_support_lines.setChecked(checked)
         self._on_support_lines_action_toggled(checked)
 
+    def set_support_lines_action_checked(self, checked):
+        """Update the support-lines action checked state without triggering the handler."""
+        self._action_support_lines.blockSignals(True)
+        self._action_support_lines.setChecked(checked)
+        self._action_support_lines.blockSignals(False)
+
     def set_rf_classes_action_checked(self, checked):
-        """Update the rf classes action checked state without triggering the handler."""
+        """Update the Rf-classes action checked state without triggering the handler."""
+        self._action_rf_classes.blockSignals(True)
         self._action_rf_classes.setChecked(checked)
+        self._action_rf_classes.blockSignals(False)
+
+    def rf_classes_checked(self):
+        """Return whether Rf classes are enabled for this plate."""
+        return self._action_rf_classes.isChecked()
 
     def set_custom_line_controls_enabled(self, enabled):
         self.export_button.setEnabled(enabled)
@@ -995,6 +1011,7 @@ class MainWindow(QMainWindow):
         self.detection_range = 0.05  # Global default (used as initial value for plates)
         self.relative_rf_display = True
         self.allow_missing_rf_values = False
+        self.display_support_lines = False
         self.display_rf_classes = False
         self._rf_classes_missing_popup_shown = False
 
@@ -1464,11 +1481,6 @@ class MainWindow(QMainWindow):
         # Analysis Menu
         analysis_menu = menu_bar.addMenu("Analysis")
 
-        settings_action = QAction("Settings", self)
-        settings_action.setMenuRole(QAction.MenuRole.NoRole)
-        settings_action.triggered.connect(self.show_settings_window)
-        analysis_menu.addAction(settings_action)
-
         predict_species_action = QAction("Predict species", self)
         predict_species_action.triggered.connect(self.show_species_prediction_window)
         analysis_menu.addAction(predict_species_action)
@@ -1480,6 +1492,13 @@ class MainWindow(QMainWindow):
         generate_report_action = QAction("Generate Report", self)
         generate_report_action.triggered.connect(self.generate_report)
         analysis_menu.addAction(generate_report_action)
+
+        # Settings Menu
+        settings_menu = menu_bar.addMenu("Settings")
+        application_settings_action = QAction("Application Settings", self)
+        application_settings_action.setMenuRole(QAction.MenuRole.NoRole)
+        application_settings_action.triggered.connect(self.show_settings_window)
+        settings_menu.addAction(application_settings_action)
 
         # Reference Menu
         ref_menu = menu_bar.addMenu("Databases")
@@ -2008,6 +2027,7 @@ class MainWindow(QMainWindow):
             self.relative_rf_display,
             self.allow_missing_rf_values,
             self.display_rf_classes,
+            self.display_support_lines,
         )
         self.settings_window.show()
         self.settings_window.raise_()
@@ -2179,16 +2199,21 @@ class MainWindow(QMainWindow):
             return f"{value * 100:.0f}"
         return f"{value:.2f}"
 
-    def update_detection_settings(self, method, range_val, relative_rf=True, allow_missing_rf_values=False, display_rf_classes=False):
+    def update_detection_settings(self, method, range_val, relative_rf=True, allow_missing_rf_values=False, display_rf_classes=False, display_support_lines=None):
         self.detection_method = method
         self.detection_range = range_val
         self.relative_rf_display = relative_rf
+        if display_support_lines is None:
+            display_support_lines = self.display_support_lines
         self.allow_missing_rf_values = allow_missing_rf_values
+        self.display_support_lines = display_support_lines
         self.display_rf_classes = display_rf_classes
         if not display_rf_classes:
             self._rf_classes_missing_popup_shown = False
         for slot in self.slots:
             slot.set_relative_rf_display(relative_rf)
+            slot.image_label.show_support_lines = display_support_lines
+            slot.set_support_lines_action_checked(display_support_lines)
             slot.set_rf_classes_action_checked(display_rf_classes)
         self.update_detection_status_label()
 
@@ -2200,12 +2225,25 @@ class MainWindow(QMainWindow):
                 relative_rf,
                 allow_missing_rf_values,
                 display_rf_classes,
+                display_support_lines,
             )
 
         self.update_results_display()
 
+    def set_display_support_lines(self, checked):
+        """Apply the application-level support-lines switch to all plates."""
+        self.display_support_lines = checked
+        if hasattr(self, 'settings_window') and self.settings_window is not None:
+            self.settings_window.display_support_lines_checkbox.blockSignals(True)
+            self.settings_window.display_support_lines_checkbox.setChecked(checked)
+            self.settings_window.display_support_lines_checkbox.blockSignals(False)
+        for slot in self.slots:
+            slot.image_label.show_support_lines = checked
+            slot.set_support_lines_action_checked(checked)
+        self.update_results_display()
+
     def set_display_rf_classes(self, checked):
-        """Toggle the global rf-classes overlay and keep all slot menus and the settings window in sync."""
+        """Apply the application-level Rf-classes switch to all plates."""
         self.display_rf_classes = checked
         if not checked:
             self._rf_classes_missing_popup_shown = False
@@ -2450,7 +2488,7 @@ class MainWindow(QMainWindow):
         if self._rf_classes_missing_popup_shown:
             return
         self._rf_classes_missing_popup_shown = True
-        QMessageBox.warning(
+        QMessageBox.information(
             self,
             "Rf classes unavailable",
             "Atranorin and Norstictic Acid have to be references to use Rf classes.",
@@ -2472,20 +2510,21 @@ class MainWindow(QMainWindow):
             )
 
             slot.image_label.support_line_specs_provider = None
-            if self.display_rf_classes and slot.image_label.show_support_lines:
+            slot_rf_classes_enabled = slot.rf_classes_checked() if hasattr(slot, 'rf_classes_checked') else self.display_rf_classes
+            if slot_rf_classes_enabled and slot.image_label.show_support_lines:
                 refs = rf_class_reference_positions.get(plate_idx)
                 if refs is not None:
                     atranorin_y, norstictic_y = refs
                     slot.image_label.support_line_specs_provider = (
                         lambda slot=slot, atranorin_y=atranorin_y, norstictic_y=norstictic_y: self._rf_class_support_line_specs(slot, atranorin_y, norstictic_y)
                     )
-                else:
+                elif (not self.display_support_lines) or slot.image_label.show_lines or slot.image_label.spots:
                     missing_rf_class_requirements = True
 
             if slot.image_label.show_lines:
                 slot.image_label.update()
 
-        if self.display_rf_classes and missing_rf_class_requirements:
+        if missing_rf_class_requirements:
             self._show_rf_classes_missing_popup()
         elif not missing_rf_class_requirements:
             self._rf_classes_missing_popup_shown = False
@@ -3163,6 +3202,7 @@ class MainWindow(QMainWindow):
             "detection_range": self.detection_range,
             "relative_rf_display": self.relative_rf_display,
             "allow_missing_rf_values": self.allow_missing_rf_values,
+            "display_support_lines": self.display_support_lines,
             "display_rf_classes": self.display_rf_classes,
             "plate_ranges": self.plate_ranges,
             "calibration_mode": self.calibration_mode,
@@ -3200,6 +3240,7 @@ class MainWindow(QMainWindow):
                 "start_line_y": slot.image_label.start_line_y,
                 "front_line_y": slot.image_label.front_line_y,
                 "show_support_lines": slot.image_label.show_support_lines,
+                "show_rf_classes": slot.rf_classes_checked(),
                 "custom_lines": slot.image_label.custom_lines,
                 "spots": slot.image_label.spots
             }
@@ -3241,6 +3282,13 @@ class MainWindow(QMainWindow):
                  self.relative_rf_display = bool(data["relative_rf_display"])
             if "allow_missing_rf_values" in data:
                  self.allow_missing_rf_values = bool(data["allow_missing_rf_values"])
+            if "display_support_lines" in data:
+                 self.display_support_lines = bool(data["display_support_lines"])
+            else:
+                 self.display_support_lines = any(
+                     bool(plate.get("show_support_lines", False))
+                     for plate in data.get("plates", [])
+                 )
             if "display_rf_classes" in data:
                  self.display_rf_classes = bool(data["display_rf_classes"])
             if "plate_ranges" in data:
@@ -3325,7 +3373,8 @@ class MainWindow(QMainWindow):
                     path = plate_info.get("image_path")
                     start_y = plate_info.get("start_line_y", 0.9)
                     front_y = plate_info.get("front_line_y", 0.1)
-                    show_support_lines = bool(plate_info.get("show_support_lines", False))
+                    show_support_lines = bool(plate_info.get("show_support_lines", self.display_support_lines))
+                    show_rf_classes = bool(plate_info.get("show_rf_classes", self.display_rf_classes))
                     custom_lines = plate_info.get("custom_lines", [])
                     spots = plate_info.get("spots", [])
 
@@ -3338,6 +3387,7 @@ class MainWindow(QMainWindow):
                     slot.image_label.start_line_y = start_y
                     slot.image_label.front_line_y = front_y
                     slot._action_support_lines.setChecked(show_support_lines)
+                    slot._action_rf_classes.setChecked(show_rf_classes)
                     slot.image_label.show_support_lines = show_support_lines
                     safe_custom_lines = []
                     for line in custom_lines:
@@ -3480,6 +3530,7 @@ class MainWindow(QMainWindow):
 
         # Reset per-plate ranges to default
         self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
+        self.display_support_lines = False
         self.display_rf_classes = False
         self._rf_classes_missing_popup_shown = False
         for i, slot in enumerate(self.slots):
@@ -3552,6 +3603,7 @@ class MainWindow(QMainWindow):
             slot.image_label.support_line_specs_provider = None
             slot.set_custom_line_controls_enabled(False)
             slot._action_support_lines.setChecked(False)
+            slot._action_rf_classes.setChecked(False)
             slot.image_label.set_global_colors({})
             # Signal won't fire if lines aren't moved/set via setter that emits.
             # Let's forcefully emit or set text.

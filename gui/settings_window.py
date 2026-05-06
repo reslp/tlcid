@@ -11,12 +11,12 @@ from PyQt6.QtCore import pyqtSignal
 
 
 class SettingsWindow(QWidget):
-    settingsChanged = pyqtSignal(str, float, bool, bool, bool)
+    settingsChanged = pyqtSignal(str, float, bool, bool, bool, bool)
 
     def __init__(self, parent=None):
         super().__init__()
         self.setWindowTitle("Substance Detection Settings")
-        self.resize(300, 220)
+        self.resize(300, 250)
 
         layout = QVBoxLayout()
         self.setLayout(layout)
@@ -52,6 +52,11 @@ class SettingsWindow(QWidget):
         self.allow_missing_rf_checkbox.stateChanged.connect(self.on_value_changed)
         layout.addWidget(self.allow_missing_rf_checkbox)
 
+        self.display_support_lines_checkbox = QCheckBox("Display support lines")
+        self.display_support_lines_checkbox.setChecked(False)
+        self.display_support_lines_checkbox.stateChanged.connect(self.on_value_changed)
+        layout.addWidget(self.display_support_lines_checkbox)
+
         self.display_rf_classes_checkbox = QCheckBox("Display Rf classes")
         self.display_rf_classes_checkbox.setChecked(False)
         self.display_rf_classes_checkbox.stateChanged.connect(self.on_value_changed)
@@ -81,14 +86,23 @@ class SettingsWindow(QWidget):
         range_val = self.range_spin.value()
         relative_rf = self.relative_rf_checkbox.isChecked()
         allow_missing_rf = self.allow_missing_rf_checkbox.isChecked()
+        display_support_lines = self.display_support_lines_checkbox.isChecked()
         display_rf_classes = self.display_rf_classes_checkbox.isChecked()
-        self.settingsChanged.emit(method, range_val, relative_rf, allow_missing_rf, display_rf_classes)
+        self.settingsChanged.emit(
+            method,
+            range_val,
+            relative_rf,
+            allow_missing_rf,
+            display_rf_classes,
+            display_support_lines,
+        )
 
-    def set_current_settings(self, method, range_val, relative_rf=True, allow_missing_rf=False, display_rf_classes=False):
+    def set_current_settings(self, method, range_val, relative_rf=True, allow_missing_rf=False, display_rf_classes=False, display_support_lines=False):
         self.method_combo.blockSignals(True)
         self.range_spin.blockSignals(True)
         self.relative_rf_checkbox.blockSignals(True)
         self.allow_missing_rf_checkbox.blockSignals(True)
+        self.display_support_lines_checkbox.blockSignals(True)
         self.display_rf_classes_checkbox.blockSignals(True)
 
         index = self.method_combo.findText(method)
@@ -97,12 +111,14 @@ class SettingsWindow(QWidget):
         self.range_spin.setValue(range_val)
         self.relative_rf_checkbox.setChecked(relative_rf)
         self.allow_missing_rf_checkbox.setChecked(allow_missing_rf)
+        self.display_support_lines_checkbox.setChecked(display_support_lines)
         self.display_rf_classes_checkbox.setChecked(display_rf_classes)
 
         self.method_combo.blockSignals(False)
         self.range_spin.blockSignals(False)
         self.relative_rf_checkbox.blockSignals(False)
         self.allow_missing_rf_checkbox.blockSignals(False)
+        self.display_support_lines_checkbox.blockSignals(False)
         self.display_rf_classes_checkbox.blockSignals(False)
 
         # Keep range visibility in sync with method even when signals are blocked.
