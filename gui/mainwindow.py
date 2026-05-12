@@ -431,7 +431,7 @@ class SquareLabel(QLabel):
             front_y = int(self.front_line_y * self.height())
             painter.drawLine(0, front_y, self.width(), front_y)
 
-            if self.show_support_lines:
+            if self.show_support_lines or self.support_line_specs_provider is not None:
                 support_color = QColor("gray")
                 painter.setPen(QPen(support_color, 1))
                 font = painter.font()
@@ -2511,14 +2511,14 @@ class MainWindow(QMainWindow):
 
             slot.image_label.support_line_specs_provider = None
             slot_rf_classes_enabled = slot.rf_classes_checked() if hasattr(slot, 'rf_classes_checked') else self.display_rf_classes
-            if slot_rf_classes_enabled and slot.image_label.show_support_lines:
+            if slot_rf_classes_enabled:
                 refs = rf_class_reference_positions.get(plate_idx)
                 if refs is not None:
                     atranorin_y, norstictic_y = refs
                     slot.image_label.support_line_specs_provider = (
                         lambda slot=slot, atranorin_y=atranorin_y, norstictic_y=norstictic_y: self._rf_class_support_line_specs(slot, atranorin_y, norstictic_y)
                     )
-                elif (not self.display_support_lines) or slot.image_label.show_lines or slot.image_label.spots:
+                elif slot.image_label.show_lines or slot.image_label.spots:
                     missing_rf_class_requirements = True
 
             if slot.image_label.show_lines:
