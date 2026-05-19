@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-                             QLabel, QPushButton, QFileDialog, QSizePolicy, QComboBox,
+                             QLabel, QPushButton, QFileDialog, QSizePolicy,
                              QTableWidget, QTableWidgetItem, QHeaderView, QColorDialog,
                              QMessageBox, QDoubleSpinBox, QDialog, QCheckBox, QMenu, QToolButton,
                              QWidget as QWidget2, QSplitter)
@@ -18,6 +18,16 @@ CUSTOM_HORIZONTAL_LINE_COLOR = "#0065C1"
 CUSTOM_VERTICAL_LINE_COLOR = "#990000"
 CUSTOM_LINE_BASE_WIDTH = 1.5
 START_LINE_HINT_TEXT = "For best results, adjust start line position."
+CALIBRATION_MODE_LINEAR = "Linear interpolation"
+CALIBRATION_MODE_NEAREST = "Nearest Reference"
+
+
+def _normalize_calibration_mode(mode):
+    if mode == "Nearest reference":
+        return CALIBRATION_MODE_NEAREST
+    if mode in (CALIBRATION_MODE_LINEAR, CALIBRATION_MODE_NEAREST):
+        return mode
+    return CALIBRATION_MODE_LINEAR
 
 
 def _make_icon_button(icon_filename, tooltip_text, fallback_text):
@@ -563,6 +573,7 @@ class PlateSlotsWidget(QWidget):
 class ImageSlot(QWidget):
     # Signal emitted when the per-plate range changes
     rangeChanged = pyqtSignal(int, float)  # (plate_index, range_value)
+    calibrationModeChanged = pyqtSignal(int, str)  # (plate_index, calibration_mode)
 
     def __init__(self, title, plate_index):
         super().__init__()
@@ -658,6 +669,38 @@ class ImageSlot(QWidget):
         self._view_button.setMenu(_view_menu)
         self.controls_layout.addWidget(self._view_button)
 
+        self.controls_layout.addSpacing(8)
+        self._calibration_button = QToolButton()
+        self._calibration_button.setStyleSheet("""
+        QToolButton::menu-indicator { width: 0px; }
+        """)
+        self._calibration_button.setText("Calibration ▼")
+        self._calibration_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._calibration_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._calibration_button.setToolTip(
+            "Choose the calibration mode for this plate"
+        )
+        _calibration_menu = QMenu(self._calibration_button)
+        self._action_calibration_linear = QAction(CALIBRATION_MODE_LINEAR, self)
+        self._action_calibration_linear.setCheckable(True)
+        self._action_calibration_linear.triggered.connect(
+            lambda checked: self._on_calibration_action_triggered(
+                CALIBRATION_MODE_LINEAR, checked
+            )
+        )
+        _calibration_menu.addAction(self._action_calibration_linear)
+        self._action_calibration_nearest = QAction(CALIBRATION_MODE_NEAREST, self)
+        self._action_calibration_nearest.setCheckable(True)
+        self._action_calibration_nearest.triggered.connect(
+            lambda checked: self._on_calibration_action_triggered(
+                CALIBRATION_MODE_NEAREST, checked
+            )
+        )
+        _calibration_menu.addAction(self._action_calibration_nearest)
+        self._calibration_button.setMenu(_calibration_menu)
+        self.controls_layout.addWidget(self._calibration_button)
+        self.set_calibration_mode(CALIBRATION_MODE_LINEAR)
+
         self.set_custom_line_controls_enabled(False)
 
     def hasHeightForWidth(self):
@@ -674,6 +717,7 @@ class ImageSlot(QWidget):
             self.vertical_line_button.sizeHint().height(),
             self.range_spin.sizeHint().height(),
             self._view_button.sizeHint().height(),
+            self._calibration_button.sizeHint().height(),
         )
         image_height = self.image_label.heightForWidth(width)
         return (
@@ -745,6 +789,32 @@ class ImageSlot(QWidget):
         self._action_rf_classes.setChecked(False)
         self._on_support_lines_action_toggled(False)
         self._on_rf_classes_action_toggled(False)
+
+    def _on_calibration_action_triggered(self, mode, checked):
+        mode = _normalize_calibration_mode(mode)
+        if not checked:
+            # Keep exactly one calibration mode selected.
+            self.set_calibration_mode(mode)
+            return
+        self.set_calibration_mode(mode)
+        self.calibrationModeChanged.emit(self.plate_index, mode)
+
+    def set_calibration_mode(self, mode):
+        mode = _normalize_calibration_mode(mode)
+        is_linear = mode == CALIBRATION_MODE_LINEAR
+        self._action_calibration_linear.blockSignals(True)
+        self._action_calibration_nearest.blockSignals(True)
+        self._action_calibration_linear.setChecked(is_linear)
+        self._action_calibration_nearest.setChecked(not is_linear)
+        self._action_calibration_linear.blockSignals(False)
+        self._action_calibration_nearest.blockSignals(False)
+
+    def get_calibration_mode(self):
+        return (
+            CALIBRATION_MODE_LINEAR
+            if self._action_calibration_linear.isChecked()
+            else CALIBRATION_MODE_NEAREST
+        )
 
     def set_support_lines_checked(self, checked):
         """Set support lines checked state and apply side effects."""
@@ -1018,8 +1088,13 @@ class MainWindow(QMainWindow):
         # Per-plate range settings: {plate_index: range_value}
         self.plate_ranges = {0: 0.05, 1: 0.05, 2: 0.05}
 
-        # Calibration Mode: "Linear interpolation" or "Nearest reference"
-        self.calibration_mode = "Linear interpolation"
+        # Per-plate calibration mode
+        self.calibration_mode = CALIBRATION_MODE_LINEAR  # legacy fallback for old analysis files/tests
+        self.plate_calibration_modes = {
+            0: CALIBRATION_MODE_LINEAR,
+            1: CALIBRATION_MODE_LINEAR,
+            2: CALIBRATION_MODE_LINEAR,
+        }
 
 
         # Main Layout Construction
@@ -1104,17 +1179,6 @@ class MainWindow(QMainWindow):
         self.mark_substance_button.clicked.connect(self.toggle_mark_substance)
         row4_layout.addWidget(self.mark_substance_button)
 
-        calibration_label = QLabel("Calibration setting:")
-        calibration_label.setStyleSheet("padding-left: 15px;")
-        row4_layout.addWidget(calibration_label)
-
-        self.calibration_combo = QComboBox()
-        self.calibration_combo.addItem("Linear interpolation")
-        self.calibration_combo.addItem("Nearest reference")
-        self.calibration_combo.setToolTip("Linear interpolation: uses standard Rf values as anchor points for Rf correction.\nNearest reference: corrects Rf based on the single closest reference substance.")
-        self.calibration_combo.currentTextChanged.connect(self.on_calibration_mode_changed)
-        row4_layout.addWidget(self.calibration_combo)
-
         row4_layout.addStretch()
         toolbar_left_col.addLayout(row4_layout)
 
@@ -1194,6 +1258,7 @@ class MainWindow(QMainWindow):
             slot.image_label.linesMoved.connect(lambda s, f: self.update_results_display())
             # Connect per-plate range changes
             slot.rangeChanged.connect(self.on_plate_range_changed)
+            slot.calibrationModeChanged.connect(self.on_plate_calibration_mode_changed)
             self.slots.append(slot)
             slots_layout.addWidget(slot)
         self.main_splitter.addWidget(slots_widget)
@@ -2285,10 +2350,21 @@ class MainWindow(QMainWindow):
         self.plate_ranges[plate_idx] = range_val
         self.update_results_display()
 
-    def on_calibration_mode_changed(self, mode):
-        """Handle calibration mode changes from the dropdown."""
-        self.calibration_mode = mode
-        self.update_results_display()
+    def get_plate_calibration_mode(self, plate_idx):
+        return _normalize_calibration_mode(
+            self.plate_calibration_modes.get(plate_idx, self.calibration_mode)
+        )
+
+    def set_plate_calibration_mode(self, plate_idx, mode, update_results=True):
+        normalized_mode = _normalize_calibration_mode(mode)
+        self.plate_calibration_modes[plate_idx] = normalized_mode
+        if 0 <= plate_idx < len(self.slots):
+            self.slots[plate_idx].set_calibration_mode(normalized_mode)
+        if update_results:
+            self.update_results_display()
+
+    def on_plate_calibration_mode_changed(self, plate_idx, mode):
+        self.set_plate_calibration_mode(plate_idx, mode, update_results=True)
 
     def update_detection_status_label(self):
         # Keep the legacy helper as the central place for synchronizing
@@ -2390,10 +2466,11 @@ class MainWindow(QMainWindow):
             return 0.0
         return (u_spot - u_start) / denom
 
-    def _correct_plate_rf(self, raw_rf, standards):
+    def _correct_plate_rf(self, raw_rf, standards, mode=None):
         corrected_val = raw_rf
+        mode = _normalize_calibration_mode(mode or self.calibration_mode)
 
-        if self.calibration_mode == "Linear interpolation":
+        if mode == CALIBRATION_MODE_LINEAR:
             points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
             for i in range(len(points) - 1):
                 x1, y1 = points[i]
@@ -2422,11 +2499,12 @@ class MainWindow(QMainWindow):
 
         return corrected_val
 
-    def _support_line_raw_rf(self, corrected_rf, standards):
+    def _support_line_raw_rf(self, corrected_rf, standards, mode=None):
         if not standards:
             return corrected_rf
 
-        if self.calibration_mode == "Linear interpolation":
+        mode = _normalize_calibration_mode(mode or self.calibration_mode)
+        if mode == CALIBRATION_MODE_LINEAR:
             points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
             for i in range(len(points) - 1):
                 x1, y1 = points[i]
@@ -2455,13 +2533,13 @@ class MainWindow(QMainWindow):
 
         return corrected_rf
 
-    def _support_line_widget_y(self, slot, corrected_rf, standards):
-        raw_rf = self._support_line_raw_rf(corrected_rf, standards)
+    def _support_line_widget_y(self, slot, corrected_rf, standards, mode=None):
+        raw_rf = self._support_line_raw_rf(corrected_rf, standards, mode)
         return slot.image_label.start_line_y + (raw_rf * (slot.image_label.front_line_y - slot.image_label.start_line_y))
 
-    def _custom_line_rf_label(self, slot, raw_y, standards):
+    def _custom_line_rf_label(self, slot, raw_y, standards, mode=None):
         raw_rf = self._raw_rf_from_slot_y(slot, raw_y)
-        corrected_rf = self._correct_plate_rf(raw_rf, standards)
+        corrected_rf = self._correct_plate_rf(raw_rf, standards, mode)
         return self.format_rf_value(corrected_rf)
 
     def _rf_class_support_line_specs(self, slot, atranorin_y, norstictic_y):
@@ -2499,14 +2577,15 @@ class MainWindow(QMainWindow):
         missing_rf_class_requirements = False
         for plate_idx, slot in enumerate(self.slots):
             standards = list(active_standards.get(plate_idx, []))
+            calibration_mode = self.get_plate_calibration_mode(plate_idx)
             if standards:
                 slot.image_label.support_line_y_mapper = (
-                    lambda rf_value, slot=slot, standards=standards: self._support_line_widget_y(slot, rf_value, standards)
+                    lambda rf_value, slot=slot, standards=standards, calibration_mode=calibration_mode: self._support_line_widget_y(slot, rf_value, standards, calibration_mode)
                 )
             else:
                 slot.image_label.support_line_y_mapper = None
             slot.image_label.custom_line_rf_label_provider = (
-                lambda raw_y, slot=slot, standards=standards: self._custom_line_rf_label(slot, raw_y, standards)
+                lambda raw_y, slot=slot, standards=standards, calibration_mode=calibration_mode: self._custom_line_rf_label(slot, raw_y, standards, calibration_mode)
             )
 
             slot.image_label.support_line_specs_provider = None
@@ -2802,11 +2881,12 @@ class MainWindow(QMainWindow):
                 if plate_idx in plate_data:
                     raw_val = plate_data[plate_idx][0]
 
-                    # Apply Calibration based on calibration_mode setting
+                    # Apply calibration based on this plate's calibration mode.
                     standards = active_standards.get(plate_idx, [])
+                    calibration_mode = self.get_plate_calibration_mode(plate_idx)
                     corrected_val = raw_val  # Default (no correction)
 
-                    if self.calibration_mode == "Linear interpolation":
+                    if calibration_mode == CALIBRATION_MODE_LINEAR:
                         # Linear Interpolation Calibration
                         # Include boundary points (0,0) and (1,1)
                         points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
@@ -2874,10 +2954,10 @@ class MainWindow(QMainWindow):
                             'raw': raw_val,
                             'corrected': corrected_val,
                             'standards': used_standards,
-                            'mode': 'Linear interpolation'
+                            'mode': CALIBRATION_MODE_LINEAR
                         })
 
-                    else:  # "Nearest reference" mode
+                    else:  # nearest-reference mode
                         if standards:
                             # Find the closest reference substance by observed Rf value
                             closest_std = None
@@ -2892,7 +2972,7 @@ class MainWindow(QMainWindow):
                                 obs_rf, std_rf = closest_std
                                 # Apply correction based on the nearest reference
                                 # The correction shifts the observed value to match the reference scale
-                                corrected_val = self._correct_plate_rf(raw_val, standards)
+                                corrected_val = self._correct_plate_rf(raw_val, standards, calibration_mode)
 
                                 # Identify the reference substance name
                                 std_name = "Unknown"
@@ -2919,7 +2999,7 @@ class MainWindow(QMainWindow):
                                     'raw': raw_val,
                                     'corrected': corrected_val,
                                     'standards': [std_name],
-                                    'mode': 'Nearest reference'
+                                    'mode': CALIBRATION_MODE_NEAREST
                                 })
                             else:
                                 calibration_info.append({
@@ -2927,7 +3007,7 @@ class MainWindow(QMainWindow):
                                     'raw': raw_val,
                                     'corrected': corrected_val,
                                     'standards': [],
-                                    'mode': 'Nearest reference'
+                                    'mode': CALIBRATION_MODE_NEAREST
                                 })
                         else:
                             calibration_info.append({
@@ -2935,7 +3015,7 @@ class MainWindow(QMainWindow):
                                 'raw': raw_val,
                                 'corrected': corrected_val,
                                 'standards': [],
-                                'mode': 'Nearest reference'
+                                'mode': CALIBRATION_MODE_NEAREST
                             })
 
                     prediction_input[plate_idx] = corrected_val
@@ -3205,7 +3285,7 @@ class MainWindow(QMainWindow):
             "display_support_lines": self.display_support_lines,
             "display_rf_classes": self.display_rf_classes,
             "plate_ranges": self.plate_ranges,
-            "calibration_mode": self.calibration_mode,
+            "plate_calibration_modes": self.plate_calibration_modes,
             "samples": {},
             "plates": []
         }
@@ -3241,6 +3321,7 @@ class MainWindow(QMainWindow):
                 "front_line_y": slot.image_label.front_line_y,
                 "show_support_lines": slot.image_label.show_support_lines,
                 "show_rf_classes": slot.rf_classes_checked(),
+                "calibration_mode": self.get_plate_calibration_mode(i),
                 "custom_lines": slot.image_label.custom_lines,
                 "spots": slot.image_label.spots
             }
@@ -3293,14 +3374,17 @@ class MainWindow(QMainWindow):
                  self.display_rf_classes = bool(data["display_rf_classes"])
             if "plate_ranges" in data:
                  self.plate_ranges = {int(k): v for k, v in data["plate_ranges"].items()}
-            if "calibration_mode" in data:
-                 self.calibration_mode = data["calibration_mode"]
-                 # Update the combo box without triggering the signal
-                 self.calibration_combo.blockSignals(True)
-                 index = self.calibration_combo.findText(data["calibration_mode"])
-                 if index >= 0:
-                     self.calibration_combo.setCurrentIndex(index)
-                 self.calibration_combo.blockSignals(False)
+            legacy_calibration_mode = _normalize_calibration_mode(data.get("calibration_mode", CALIBRATION_MODE_LINEAR))
+            self.calibration_mode = legacy_calibration_mode
+            if "plate_calibration_modes" in data:
+                 self.plate_calibration_modes = {
+                     int(k): _normalize_calibration_mode(v)
+                     for k, v in data["plate_calibration_modes"].items()
+                 }
+            else:
+                 self.plate_calibration_modes = {
+                     i: legacy_calibration_mode for i in range(len(self.slots))
+                 }
 
             # Update UI for detection settings
             self.update_detection_status_label()
@@ -3309,6 +3393,7 @@ class MainWindow(QMainWindow):
             for i, slot in enumerate(self.slots):
                 slot.set_relative_rf_display(self.relative_rf_display)
                 slot.set_range(self.plate_ranges.get(i, 0.05))
+                slot.set_calibration_mode(self.get_plate_calibration_mode(i))
 
             # Block signals on all image labels during loading to prevent
             # premature update_results_display calls (which would remove
@@ -3375,6 +3460,9 @@ class MainWindow(QMainWindow):
                     front_y = plate_info.get("front_line_y", 0.1)
                     show_support_lines = bool(plate_info.get("show_support_lines", self.display_support_lines))
                     show_rf_classes = bool(plate_info.get("show_rf_classes", self.display_rf_classes))
+                    calibration_mode = _normalize_calibration_mode(
+                        plate_info.get("calibration_mode", self.get_plate_calibration_mode(idx))
+                    )
                     custom_lines = plate_info.get("custom_lines", [])
                     spots = plate_info.get("spots", [])
 
@@ -3388,6 +3476,8 @@ class MainWindow(QMainWindow):
                     slot.image_label.front_line_y = front_y
                     slot._action_support_lines.setChecked(show_support_lines)
                     slot._action_rf_classes.setChecked(show_rf_classes)
+                    slot.set_calibration_mode(calibration_mode)
+                    self.plate_calibration_modes[idx] = calibration_mode
                     slot.image_label.show_support_lines = show_support_lines
                     safe_custom_lines = []
                     for line in custom_lines:
@@ -3536,11 +3626,13 @@ class MainWindow(QMainWindow):
         for i, slot in enumerate(self.slots):
             slot.set_range(0.05)
 
-        # Reset calibration mode to default
-        self.calibration_mode = "Linear interpolation"
-        self.calibration_combo.blockSignals(True)
-        self.calibration_combo.setCurrentIndex(0)
-        self.calibration_combo.blockSignals(False)
+        # Reset per-plate calibration modes to default
+        self.calibration_mode = CALIBRATION_MODE_LINEAR
+        self.plate_calibration_modes = {
+            0: CALIBRATION_MODE_LINEAR,
+            1: CALIBRATION_MODE_LINEAR,
+            2: CALIBRATION_MODE_LINEAR,
+        }
 
         # Reset Controls
         if self.mark_substance_button.isChecked():
@@ -3604,6 +3696,7 @@ class MainWindow(QMainWindow):
             slot.set_custom_line_controls_enabled(False)
             slot._action_support_lines.setChecked(False)
             slot._action_rf_classes.setChecked(False)
+            slot.set_calibration_mode(CALIBRATION_MODE_LINEAR)
             slot.image_label.set_global_colors({})
             # Signal won't fire if lines aren't moved/set via setter that emits.
             # Let's forcefully emit or set text.
