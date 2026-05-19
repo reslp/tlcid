@@ -22,6 +22,8 @@ class DatabaseTableWindow(QWidget):
         
         # Flag set by _configure_lichens_view to switch filter logic
         self._lichens_mode = False
+        self._lichens_sort_column = "Lichen"
+        self._lichens_sort_order = Qt.SortOrder.AscendingOrder
 
         self.setup_database()
         self.setup_ui()
@@ -42,20 +44,7 @@ class DatabaseTableWindow(QWidget):
 
     def filter_data(self, text):
         if self._lichens_mode:
-            # QSqlQueryModel: rebuild the aggregated query with a HAVING filter
-            self.model.setQuery(self._lichens_query(text), self.db)
-            col_labels = {
-                "Lichen": "Lichen",
-                "Substance": "Substance",
-                "Genus": "Genus",
-                "Family": "Family",
-                "FamilyReference": "Family Reference",
-                "SubstancesReference": "Substance Reference",
-            }
-            for visual_idx, col in enumerate(getattr(self, "_lichens_projected", [])):
-                self.model.setHeaderData(
-                    visual_idx, Qt.Orientation.Horizontal, col_labels.get(col, col)
-                )
+            self._refresh_lichens_model(text)
             return
 
         if not text:
@@ -108,6 +97,7 @@ class DatabaseTableWindow(QWidget):
         
         header = self.view.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
         self.view.resizeColumnsToContents()
 
         # Custom column order/width for Substances table
@@ -177,7 +167,7 @@ class DatabaseTableWindow(QWidget):
         record = self.db.record("Lichens")
         return [record.fieldName(i) for i in range(record.count())]
 
-    def _lichens_query(self, filter_text=""):
+    def _lichens_query(self, filter_text="", sort_column=None, sort_order=None):
         """Return a GROUP_CONCAT aggregation query for the Lichens table.
 
         - ``Substance`` and (if present) ``SubstancesReference`` are
@@ -189,6 +179,9 @@ class DatabaseTableWindow(QWidget):
         - When *filter_text* is given the result is filtered via a HAVING
           clause that checks the Lichen name, the aggregated Substance string,
           and (if available) Genus / Family.
+        - ``sort_column`` / ``sort_order`` are used to rebuild the query when
+          the user clicks a table header, because the aggregated lichens view
+          uses ``QSqlQueryModel`` rather than ``QSqlTableModel``.
         """
         available = self._lichens_available_columns()
 
@@ -220,7 +213,16 @@ class DatabaseTableWindow(QWidget):
                 having_parts.append(f"Family LIKE '%{safe}%'")
             q += " HAVING " + " OR ".join(having_parts)
 
-        q += " ORDER BY Lichen"
+        projected = getattr(self, "_lichens_projected", ["Lichen", "Substance"])
+        sort_column = sort_column or self._lichens_sort_column
+        if sort_column not in projected:
+            sort_column = "Lichen"
+
+        direction = "DESC" if sort_order == Qt.SortOrder.DescendingOrder else "ASC"
+        if sort_column == "Lichen":
+            q += f" ORDER BY Lichen {direction}"
+        else:
+            q += f" ORDER BY {sort_column} {direction}, Lichen ASC"
         return q
 
     def _configure_lichens_view(self):
@@ -232,17 +234,7 @@ class DatabaseTableWindow(QWidget):
         available = self._lichens_available_columns()
 
         self.model = QSqlQueryModel(self)
-        self.model.setQuery(self._lichens_query(), self.db)
 
-        # Apply friendly header labels for all projected columns
-        col_labels = {
-            "Lichen": "Lichen",
-            "Substance": "Substance",
-            "Genus": "Genus",
-            "Family": "Family",
-            "FamilyReference": "Family Reference",
-            "SubstancesReference": "Substance Reference",
-        }
         # Build the ordered list of columns the query actually projects
         projected = ["Lichen", "Substance"]
         for col in ("Genus", "Family", "FamilyReference"):
@@ -252,13 +244,45 @@ class DatabaseTableWindow(QWidget):
             projected.append("SubstancesReference")
 
         self._lichens_projected = projected  # store for filter refresh
-        for visual_idx, col in enumerate(projected):
+
+        self.view.setModel(self.model)
+        self.view.horizontalHeader().setSortIndicator(
+            0, Qt.SortOrder.AscendingOrder
+        )
+        self._refresh_lichens_model()
+        self.view.resizeColumnsToContents()
+
+    def _refresh_lichens_model(self, filter_text=""):
+        col_labels = {
+            "Lichen": "Lichen",
+            "Substance": "Substance",
+            "Genus": "Genus",
+            "Family": "Family",
+            "FamilyReference": "Family Reference",
+            "SubstancesReference": "Substance Reference",
+        }
+        self.model.setQuery(
+            self._lichens_query(
+                filter_text,
+                sort_column=self._lichens_sort_column,
+                sort_order=self._lichens_sort_order,
+            ),
+            self.db,
+        )
+        for visual_idx, col in enumerate(getattr(self, "_lichens_projected", [])):
             self.model.setHeaderData(
                 visual_idx, Qt.Orientation.Horizontal, col_labels.get(col, col)
             )
 
-        self.view.setModel(self.model)
-        self.view.resizeColumnsToContents()
+    def _on_sort_indicator_changed(self, logical_index, sort_order):
+        if not self._lichens_mode:
+            return
+        projected = getattr(self, "_lichens_projected", [])
+        if logical_index < 0 or logical_index >= len(projected):
+            return
+        self._lichens_sort_column = projected[logical_index]
+        self._lichens_sort_order = sort_order
+        self._refresh_lichens_model(self.search_input.text())
 
     def closeEvent(self, event):
         # Optional: cleanup or hide
