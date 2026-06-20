@@ -1,16 +1,32 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QLabel, QPushButton, QFileDialog, QSizePolicy,
-                             QTableWidget, QTableWidgetItem, QHeaderView, QColorDialog,
-                             QMessageBox, QDoubleSpinBox, QDialog, QCheckBox, QMenu, QToolButton,
-                             QWidget as QWidget2, QSplitter)
+                             QTableWidget, QHeaderView, QColorDialog,
+                             QMessageBox, QDoubleSpinBox, QDialog, QMenu, QToolButton,
+                             QSplitter)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QCloseEvent, QIcon
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 from pathlib import Path
-import html
 
+from gui.analysis_io import AnalysisSerializer
+from gui.calibration import (
+    CALIBRATION_MODE_LINEAR,
+    CALIBRATION_MODE_NEAREST,
+    correct_rf,
+    normalize_calibration_mode as _normalize_calibration_mode,
+    support_line_raw_rf,
+)
+from gui.prediction_service import PredictionService
+from gui.reference_repository import ReferenceRepository
 from gui.report_generator import PDFReportGenerator
+from gui.results_table_renderer import ResultsTableRenderer
+from gui.reference_standards import (
+    REFERENCE_STANDARDS,
+    get_reference_standard,
+    predefined_reference_rf_values,
+    reference_standard_name_for_rf_value,
+)
 
 
 ICON_DIR = Path(__file__).resolve().parent / "icons"
@@ -18,16 +34,6 @@ CUSTOM_HORIZONTAL_LINE_COLOR = "#0065C1"
 CUSTOM_VERTICAL_LINE_COLOR = "#990000"
 CUSTOM_LINE_BASE_WIDTH = 1.5
 START_LINE_HINT_TEXT = "For best results, adjust start line position."
-CALIBRATION_MODE_LINEAR = "Linear interpolation"
-CALIBRATION_MODE_NEAREST = "Nearest Reference"
-
-
-def _normalize_calibration_mode(mode):
-    if mode == "Nearest reference":
-        return CALIBRATION_MODE_NEAREST
-    if mode in (CALIBRATION_MODE_LINEAR, CALIBRATION_MODE_NEAREST):
-        return mode
-    return CALIBRATION_MODE_LINEAR
 
 
 def _make_icon_button(icon_filename, tooltip_text, fallback_text):
@@ -77,34 +83,6 @@ def _make_custom_line_pen(orientation, width):
     pen.setWidthF(width)
     pen.setStyle(Qt.PenStyle.DashLine)
     return pen
-
-
-def _serialize_qcolor(color):
-    if isinstance(color, QColor) and color.isValid():
-        return color.name(QColor.NameFormat.HexArgb)
-    return None
-
-
-def _deserialize_qcolor(value):
-    color = QColor()
-    if isinstance(value, str):
-        color = QColor(value)
-    elif isinstance(value, (tuple, list)) and len(value) >= 3:
-        color = QColor(int(value[0]), int(value[1]), int(value[2]))
-    elif isinstance(value, QColor):
-        color = QColor(value)
-    return color if color.isValid() else None
-
-
-class SortableTableWidgetItem(QTableWidgetItem):
-    """QTableWidgetItem that sorts by a stored underlying value when available."""
-
-    def __lt__(self, other):
-        left_value = self.data(Qt.ItemDataRole.UserRole)
-        right_value = other.data(Qt.ItemDataRole.UserRole) if other is not None else None
-        if left_value is not None and right_value is not None:
-            return left_value < right_value
-        return super().__lt__(other)
 
 
 class SquareLabel(QLabel):
@@ -1027,7 +1005,12 @@ class MainWindow(QMainWindow):
 
         # State
         self.samples = {} # {id: {'color': QColor, 'name': str}}
-        self.genus_to_substances = {} # Cache for genus-specific substance filtering
+        self.reference_repository = ReferenceRepository(self.db_path)
+        self.prediction_service = PredictionService()
+        self.reference_data = [] # Compatibility cache for prediction
+        self.reference_rf_by_name = {}
+        self.genus_to_substances = {} # Compatibility cache for genus-specific substance filtering
+        self.family_to_substances = {}
         self.next_sample_id = 1
         self.active_regular_marking_sid = None
         self.colors = [
@@ -1039,41 +1022,16 @@ class MainWindow(QMainWindow):
         self.char_windows = {}    # {sid: SubstanceCharacteristicsWindow}
         self.detail_windows = {}  # {name: SubstanceDetailWindow}
 
-        self.reference_data = [] # Cache for prediction
         self._ensure_default_db_connection()
         self.load_reference_data() # Load DB data on startup
 
-        # Standards configuration (Values / 100.0)
-        # ID 0: Atranorin
-        self.atranorin_standards = {
-            0: 0.76, # A
-            1: 0.73, # Bprime
-            2: 0.79  # C
-        }
-        # ID -1: Norstictic Acid (A=40, B=32, C=30)
-        self.norstictic_standards = {
-            0: 0.40, # A
-            1: 0.32, # Bprime
-            2: 0.30  # C
-        }
-        # ID -2: Rhizocarpic Acid (A=67, B=41, C=65)
-        self.rhizocarpic_standards = {
-            0: 0.67, # A
-            1: 0.41, # Bprime
-            2: 0.65  # C
-        }
-        # ID -3: Lecanoric Acid (A=28, B=44, C=22)
-        self.lecanoric_standards = {
-            0: 0.28, # A
-            1: 0.44, # Bprime
-            2: 0.22  # C
-        }
-        # ID -4: Evernic Acid (A=38, B=60, C=43)
-        self.evernic_standards = {
-            0: 0.38, # A
-            1: 0.60, # Bprime
-            2: 0.43  # C
-        }
+        # Compatibility aliases for code/tests that still access named standards directly.
+        # Source of truth is gui.reference_standards.REFERENCE_STANDARDS.
+        self.atranorin_standards = REFERENCE_STANDARDS[0].rf_by_plate
+        self.norstictic_standards = REFERENCE_STANDARDS[-1].rf_by_plate
+        self.rhizocarpic_standards = REFERENCE_STANDARDS[-2].rf_by_plate
+        self.lecanoric_standards = REFERENCE_STANDARDS[-3].rf_by_plate
+        self.evernic_standards = REFERENCE_STANDARDS[-4].rf_by_plate
 
 
         # Detection Settings
@@ -1129,30 +1087,16 @@ class MainWindow(QMainWindow):
         row2_layout.setContentsMargins(0, 0, 0, 0)
 
 
-        self.mark_atranorin_button = QPushButton("Atranorin")
-        self.mark_atranorin_button.setCheckable(True)
-        self.mark_atranorin_button.clicked.connect(self.toggle_mark_atranorin)
-        row2_layout.addWidget(self.mark_atranorin_button)
-
-        self.mark_norstictic_button = QPushButton("Norstictic Acid")
-        self.mark_norstictic_button.setCheckable(True)
-        self.mark_norstictic_button.clicked.connect(self.toggle_mark_norstictic)
-        row2_layout.addWidget(self.mark_norstictic_button)
-
-        self.mark_rhizocarpic_button = QPushButton("Rhizocarpic Acid")
-        self.mark_rhizocarpic_button.setCheckable(True)
-        self.mark_rhizocarpic_button.clicked.connect(self.toggle_mark_rhizocarpic)
-        row2_layout.addWidget(self.mark_rhizocarpic_button)
-
-        self.mark_lecanoric_button = QPushButton("Lecanoric Acid")
-        self.mark_lecanoric_button.setCheckable(True)
-        self.mark_lecanoric_button.clicked.connect(self.toggle_mark_lecanoric)
-        row2_layout.addWidget(self.mark_lecanoric_button)
-
-        self.mark_evernic_button = QPushButton("Evernic Acid")
-        self.mark_evernic_button.setCheckable(True)
-        self.mark_evernic_button.clicked.connect(self.toggle_mark_evernic)
-        row2_layout.addWidget(self.mark_evernic_button)
+        self.reference_buttons = {}
+        for standard in REFERENCE_STANDARDS.values():
+            button = QPushButton(standard.button_text)
+            button.setCheckable(True)
+            button.clicked.connect(
+                lambda checked, sid=standard.sample_id: self.toggle_mark_reference(sid, checked)
+            )
+            setattr(self, standard.button_attr, button)
+            self.reference_buttons[standard.sample_id] = button
+            row2_layout.addWidget(button)
 
         row2_layout.addStretch()
         toolbar_left_col.addLayout(row2_layout)
@@ -1305,6 +1249,7 @@ class MainWindow(QMainWindow):
         # Row Height
         # Connect Cell Click
         self.results_table.cellClicked.connect(self.handle_table_click)
+        self.results_renderer = ResultsTableRenderer(self.results_table, self)
 
         self.main_splitter.addWidget(self.results_table)
 
@@ -1373,14 +1318,8 @@ class MainWindow(QMainWindow):
         # Update the sample data
         self.samples[sid]['is_reference'] = (state == 2)  # Qt.CheckState.Checked == 2
 
-        # Predefined reference standards can use hardcoded Rf values directly
-        predefined_reference_rf = {
-            0: [self.atranorin_standards.get(0), self.atranorin_standards.get(1), self.atranorin_standards.get(2)],
-            -1: [self.norstictic_standards.get(0), self.norstictic_standards.get(1), self.norstictic_standards.get(2)],
-            -2: [self.rhizocarpic_standards.get(0), self.rhizocarpic_standards.get(1), self.rhizocarpic_standards.get(2)],
-            -3: [self.lecanoric_standards.get(0), self.lecanoric_standards.get(1), self.lecanoric_standards.get(2)],
-            -4: [self.evernic_standards.get(0), self.evernic_standards.get(1), self.evernic_standards.get(2)],
-        }
+        # Predefined reference standards can use configured Rf values directly
+        predefined_reference_rf = predefined_reference_rf_values()
 
         # If checked, load reference Rf values
         if self.samples[sid]['is_reference']:
@@ -1415,36 +1354,11 @@ class MainWindow(QMainWindow):
         self.update_results_display()
 
     def get_substance_rf_from_db(self, name):
-        """Look up Rf values from the database for a given substance name."""
-        from PyQt6.QtSql import QSqlDatabase, QSqlQuery
-
-        if not QSqlDatabase.contains("main_ref_connection"):
-            return None
-
-        db = QSqlDatabase.database("main_ref_connection")
-        if not db.isOpen():
-            return None
-
-        query = QSqlQuery(db)
-        query.prepare("SELECT A, Bprime, C FROM Substances WHERE name = :name")
-        query.bindValue(":name", name)
-
-        if query.exec() and query.next():
-            def parse_rf(val):
-                if val is None or val == "":
-                    return None
-                try:
-                    return float(val) / 100.0
-                except:
-                    return None
-
-            rf_a = parse_rf(query.value(0))
-            rf_b = parse_rf(query.value(1))
-            rf_c = parse_rf(query.value(2))
-
-            return [rf_a, rf_b, rf_c]
-
-        return None
+        """Look up Rf values from the configured reference repository."""
+        cached = self.reference_rf_by_name.get(name)
+        if cached is not None:
+            return cached
+        return self.reference_repository.get_substance_rf(name)
 
     def change_sample_color(self, sid):
         if sid not in self.samples:
@@ -1497,6 +1411,7 @@ class MainWindow(QMainWindow):
             return
 
         self.db_path = db_path
+        self.reference_repository.set_database_path(db_path)
 
         for connection_name in ["qt_sql_default_connection", "main_ref_connection", "substances_connection"]:
             if QSqlDatabase.contains(connection_name):
@@ -1748,16 +1663,9 @@ class MainWindow(QMainWindow):
         """Return the sample ID currently being marked, if any."""
         if self.mark_substance_button.isChecked():
             return self.active_regular_marking_sid
-        if self.mark_atranorin_button.isChecked():
-            return 0
-        if self.mark_norstictic_button.isChecked():
-            return -1
-        if self.mark_rhizocarpic_button.isChecked():
-            return -2
-        if self.mark_lecanoric_button.isChecked():
-            return -3
-        if self.mark_evernic_button.isChecked():
-            return -4
+        for sid, button in self.reference_buttons.items():
+            if button.isChecked():
+                return sid
         return None
 
     def remark_substance(self, sid):
@@ -1784,16 +1692,8 @@ class MainWindow(QMainWindow):
         # If this substance is currently in an active marking mode, stop that mode first.
         if sid > 0 and self.mark_substance_button.isChecked() and sid == self.active_regular_marking_sid:
             self.mark_substance_button.click()
-        elif sid == 0 and self.mark_atranorin_button.isChecked():
-            self.mark_atranorin_button.click()
-        elif sid == -1 and self.mark_norstictic_button.isChecked():
-            self.mark_norstictic_button.click()
-        elif sid == -2 and self.mark_rhizocarpic_button.isChecked():
-            self.mark_rhizocarpic_button.click()
-        elif sid == -3 and self.mark_lecanoric_button.isChecked():
-            self.mark_lecanoric_button.click()
-        elif sid == -4 and self.mark_evernic_button.isChecked():
-            self.mark_evernic_button.click()
+        elif sid in self.reference_buttons and self.reference_buttons[sid].isChecked():
+            self.reference_buttons[sid].click()
 
         # Remove all matching spots from all plates.
         for slot in self.slots:
@@ -1911,14 +1811,7 @@ class MainWindow(QMainWindow):
 
     def ensure_single_mode(self, active_btn):
         # Helper to uncheck other buttons
-        buttons = [
-            self.mark_substance_button,
-            self.mark_atranorin_button,
-            self.mark_norstictic_button,
-            self.mark_rhizocarpic_button,
-            self.mark_lecanoric_button,
-            self.mark_evernic_button
-        ]
+        buttons = [self.mark_substance_button, *self.reference_buttons.values()]
         for btn in buttons:
             if btn != active_btn and btn.isChecked():
                 btn.click() # This triggers its toggle handler to clean up
@@ -2398,60 +2291,37 @@ class MainWindow(QMainWindow):
             self.mark_substance_button.setText("New Substance")
             self.deactivate_marking_mode()
 
-    def toggle_mark_atranorin(self, checked):
-        if checked:
-            self.ensure_single_mode(self.mark_atranorin_button)
+    def toggle_mark_reference(self, sid, checked):
+        standard = get_reference_standard(sid)
+        if standard is None:
+            return
 
-            # Atranorin Mode (ID 0)
-            self.mark_atranorin_button.setText("Stop Ref (Atr)")
-            self.activate_marking_mode(0, QColor("red"), "Atranorin (Ref)")
+        button = self.reference_buttons.get(sid, getattr(self, standard.button_attr, None))
+        if button is None:
+            return
+
+        if checked:
+            self.ensure_single_mode(button)
+            button.setText(standard.active_text)
+            self.activate_marking_mode(sid, standard.color(), standard.sample_name)
         else:
-            self.mark_atranorin_button.setText("Atranorin")
+            button.setText(standard.inactive_text)
             self.deactivate_marking_mode()
+
+    def toggle_mark_atranorin(self, checked):
+        self.toggle_mark_reference(0, checked)
 
     def toggle_mark_norstictic(self, checked):
-        if checked:
-            self.ensure_single_mode(self.mark_norstictic_button)
-
-            # Norstictic Mode (ID -1)
-            self.mark_norstictic_button.setText("Stop Ref (Nor)")
-            self.activate_marking_mode(-1, QColor("gold"), "Norstictic Acid (Ref)")
-        else:
-            self.mark_norstictic_button.setText("Norstictic")
-            self.deactivate_marking_mode()
+        self.toggle_mark_reference(-1, checked)
 
     def toggle_mark_rhizocarpic(self, checked):
-        if checked:
-            self.ensure_single_mode(self.mark_rhizocarpic_button)
-
-            # Rhizocarpic Acid Mode (ID -2)
-            self.mark_rhizocarpic_button.setText("Stop Ref (Rhi)")
-            self.activate_marking_mode(-2, QColor("orange"), "Rhizocarpic Acid (Ref)")
-        else:
-            self.mark_rhizocarpic_button.setText("Rhizocarpic Acid")
-            self.deactivate_marking_mode()
+        self.toggle_mark_reference(-2, checked)
 
     def toggle_mark_lecanoric(self, checked):
-        if checked:
-            self.ensure_single_mode(self.mark_lecanoric_button)
-
-            # Lecanoric Acid Mode (ID -3)
-            self.mark_lecanoric_button.setText("Stop Ref (Lec)")
-            self.activate_marking_mode(-3, QColor("limegreen"), "Lecanoric Acid (Ref)")
-        else:
-            self.mark_lecanoric_button.setText("Lecanoric Acid")
-            self.deactivate_marking_mode()
+        self.toggle_mark_reference(-3, checked)
 
     def toggle_mark_evernic(self, checked):
-        if checked:
-            self.ensure_single_mode(self.mark_evernic_button)
-
-            # Evernic Acid Mode (ID -4)
-            self.mark_evernic_button.setText("Stop Ref (Eve)")
-            self.activate_marking_mode(-4, QColor("magenta"), "Evernic Acid (Ref)")
-        else:
-            self.mark_evernic_button.setText("Evernic Acid")
-            self.deactivate_marking_mode()
+        self.toggle_mark_reference(-4, checked)
 
     def _raw_rf_from_slot_y(self, slot, raw_y):
         raw_start = slot.image_label.start_line_y
@@ -2467,71 +2337,10 @@ class MainWindow(QMainWindow):
         return (u_spot - u_start) / denom
 
     def _correct_plate_rf(self, raw_rf, standards, mode=None):
-        corrected_val = raw_rf
-        mode = _normalize_calibration_mode(mode or self.calibration_mode)
-
-        if mode == CALIBRATION_MODE_LINEAR:
-            points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
-            for i in range(len(points) - 1):
-                x1, y1 = points[i]
-                x2, y2 = points[i + 1]
-                if x1 <= raw_rf <= x2:
-                    if abs(x2 - x1) > 1e-7:
-                        corrected_val = y1 + (raw_rf - x1) * (y2 - y1) / (x2 - x1)
-                    else:
-                        corrected_val = y1
-                    break
-        elif standards:
-            closest_std = None
-            min_dist = float('inf')
-            for obs_rf, std_rf in standards:
-                dist = abs(raw_rf - obs_rf)
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_std = (obs_rf, std_rf)
-
-            if closest_std:
-                obs_rf, std_rf = closest_std
-                if obs_rf > 1e-7:
-                    correction_factor = std_rf / obs_rf
-                    corrected_val = raw_rf * correction_factor
-                    corrected_val = max(0.0, min(1.0, corrected_val))
-
-        return corrected_val
+        return correct_rf(raw_rf, standards, mode or self.calibration_mode)
 
     def _support_line_raw_rf(self, corrected_rf, standards, mode=None):
-        if not standards:
-            return corrected_rf
-
-        mode = _normalize_calibration_mode(mode or self.calibration_mode)
-        if mode == CALIBRATION_MODE_LINEAR:
-            points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
-            for i in range(len(points) - 1):
-                x1, y1 = points[i]
-                x2, y2 = points[i + 1]
-                lo = min(y1, y2)
-                hi = max(y1, y2)
-                if lo <= corrected_rf <= hi:
-                    if abs(y2 - y1) > 1e-7:
-                        return x1 + (corrected_rf - y1) * (x2 - x1) / (y2 - y1)
-                    return x1
-            return corrected_rf
-
-        closest_std = None
-        min_dist = float('inf')
-        for obs_rf, std_rf in standards:
-            dist = abs(corrected_rf - std_rf)
-            if dist < min_dist:
-                min_dist = dist
-                closest_std = (obs_rf, std_rf)
-
-        if closest_std:
-            obs_rf, std_rf = closest_std
-            if std_rf > 1e-7:
-                raw_rf = corrected_rf * (obs_rf / std_rf)
-                return max(0.0, min(1.0, raw_rf))
-
-        return corrected_rf
+        return support_line_raw_rf(corrected_rf, standards, mode or self.calibration_mode)
 
     def _support_line_widget_y(self, slot, corrected_rf, standards, mode=None):
         raw_rf = self._support_line_raw_rf(corrected_rf, standards, mode)
@@ -2541,6 +2350,18 @@ class MainWindow(QMainWindow):
         raw_rf = self._raw_rf_from_slot_y(slot, raw_y)
         corrected_rf = self._correct_plate_rf(raw_rf, standards, mode)
         return self.format_rf_value(corrected_rf)
+
+    def _reference_name_for_standard_value(self, plate_idx, rf_value):
+        std_name = reference_standard_name_for_rf_value(rf_value)
+        if std_name is not None:
+            return std_name
+
+        for ref_sid, sdata in self.samples.items():
+            if sdata.get('is_reference', False) and sdata.get('reference_rf'):
+                ref_rf = sdata['reference_rf']
+                if plate_idx < len(ref_rf) and ref_rf[plate_idx] == rf_value:
+                    return sdata.get('assigned_name', f"Substance {ref_sid}")
+        return "Unknown"
 
     def _rf_class_support_line_specs(self, slot, atranorin_y, norstictic_y):
         anchor_points = [
@@ -2608,155 +2429,96 @@ class MainWindow(QMainWindow):
         elif not missing_rf_class_requirements:
             self._rf_classes_missing_popup_shown = False
 
-    def update_results_display(self):
+    def _safe_print(self, *args, **kwargs):
         import sys
 
-        def _safe_print(*args, **kwargs):
-            try:
-                print(*args, **kwargs)
-            except UnicodeEncodeError:
-                sep = kwargs.get("sep", " ")
-                end = kwargs.get("end", "\n")
-                text = sep.join(str(a) for a in args)
-                enc = (getattr(sys.stdout, "encoding", None) or "utf-8")
-                safe = text.encode(enc, errors="backslashreplace").decode(enc, errors="replace")
-                print(safe, end=end)
-        # Aggregate data from all slots
-        # Map: Sample ID -> { Plate Index -> [rf1, rf2, ...] }
-        aggregated = {}
+        try:
+            print(*args, **kwargs)
+        except UnicodeEncodeError:
+            sep = kwargs.get("sep", " ")
+            end = kwargs.get("end", "\n")
+            text = sep.join(str(a) for a in args)
+            enc = (getattr(sys.stdout, "encoding", None) or "utf-8")
+            safe = text.encode(enc, errors="backslashreplace").decode(enc, errors="replace")
+            print(safe, end=end)
 
+    def _aggregate_spots(self):
+        """Return sample id -> plate index -> raw Rf values aggregated from all image slots."""
+        aggregated = {}
         for i, slot in enumerate(self.slots):
-            spots = slot.image_label.spots # list of dicts
+            spots = slot.image_label.spots
             for spot in spots:
-                # Debug print for spots
-                _safe_print(f"DEBUG: Spot on Plate {i}: {spot}")
+                self._safe_print(f"DEBUG: Spot on Plate {i}: {spot}")
                 sid = spot['sample_id']
                 raw_y = spot['y']
                 rf_val = self._raw_rf_from_slot_y(slot, raw_y)
+                aggregated.setdefault(sid, {}).setdefault(i, []).append(rf_val)
+        return aggregated
 
-                if sid not in aggregated:
-                    aggregated[sid] = {}
-                if i not in aggregated[sid]:
-                    aggregated[sid][i] = []
-                aggregated[sid][i].append(rf_val)
-
-        # Sync self.samples with aggregated data:
-        # If a sample ID is no longer in any of the plate spots (not in 'aggregated'),
-        # remove it from self.samples to clear it from the results list.
-        # We keep IDs <= 0 as they represent reference standards (Atranorin/Norstictic).
-        # Determine which substance is currently being marked (if any)
-        currently_marking_sid = self.current_marking_sid()
-
-        ids_to_remove = []
-        for sid in self.samples:
-            # Remove substance if it has no spots (not in aggregated)
-            # Exception: if currently being marked (button checked) AND has at least one spot,
-            # don't remove it. But if it has no spots at all, remove it even if being marked.
-            if sid > 0 and sid not in aggregated:
-                ids_to_remove.append(sid)
+    def _sync_samples_with_aggregated_spots(self, aggregated):
+        """Remove regular samples with no plate spots and clear stale prediction matches."""
+        ids_to_remove = [sid for sid in self.samples if sid > 0 and sid not in aggregated]
 
         if ids_to_remove:
-            _safe_print(f"DEBUG: Removing substances {ids_to_remove} (no spots remaining)")
+            self._safe_print(f"DEBUG: Removing substances {ids_to_remove} (no spots remaining)")
         else:
-            _safe_print(f"DEBUG: No substances to remove. aggregated={sorted(aggregated.keys())}, samples={sorted(self.samples.keys())}")
+            self._safe_print(
+                f"DEBUG: No substances to remove. aggregated={sorted(aggregated.keys())}, "
+                f"samples={sorted(self.samples.keys())}"
+            )
 
         for sid in ids_to_remove:
-            _safe_print(f"DEBUG: Removing substance ID {sid}")
+            self._safe_print(f"DEBUG: Removing substance ID {sid}")
             self.samples.pop(sid)
-            # Close any open characteristics window for this sample
             if sid in self.char_windows:
                 try:
                     self.char_windows[sid].close()
                     self.char_windows[sid].deleteLater()
                 except RuntimeError:
-                    pass  # Widget already deleted by Qt
+                    pass
                 self.char_windows.pop(sid, None)
 
-        # Refresh global color map in slots after removal to keep synchronized
         if ids_to_remove:
             color_map = {k: v['color'] for k, v in self.samples.items()}
             for slot in self.slots:
                 slot.image_label.set_global_colors(color_map)
 
-        # Clear previous matches for remaining samples
-        for sid, sdata in self.samples.items():
+        for _sid, sdata in self.samples.items():
             sdata['last_matches'] = []
 
-        # Debug print for aggregated data
-        _safe_print(f"DEBUG: Aggregated Rf values: {aggregated}")
+        self._safe_print(f"DEBUG: Aggregated Rf values: {aggregated}")
 
-        # Check for auto-stop if currently marking
+    def _auto_stop_completed_marking(self, aggregated):
+        """Leave marking mode once the active substance has spots on all plates."""
         if self.mark_substance_button.isChecked():
             current_sid = self.active_regular_marking_sid
-            # Check if this sample has entries for all 3 plates (indices 0, 1, 2)
             if current_sid in aggregated and len(aggregated[current_sid]) == 3:
                 self.mark_substance_button.click()
-        elif self.mark_atranorin_button.isChecked():
-            current_sid = 0 # Atranorin ID
-            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
-                self.mark_atranorin_button.click()
-        elif self.mark_norstictic_button.isChecked():
-            current_sid = -1 # Norstictic ID
-            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
-                self.mark_norstictic_button.click()
-        elif self.mark_rhizocarpic_button.isChecked():
-            current_sid = -2 # Rhizocarpic Acid ID
-            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
-                self.mark_rhizocarpic_button.click()
-        elif self.mark_lecanoric_button.isChecked():
-            current_sid = -3 # Lecanoric Acid ID
-            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
-                self.mark_lecanoric_button.click()
-        elif self.mark_evernic_button.isChecked():
-            current_sid = -4 # Evernic Acid ID
-            if current_sid in aggregated and len(aggregated[current_sid]) == 3:
-                self.mark_evernic_button.click()
+            return
 
-        # Calibration Logic
-        # Gather Active Standards per Plate
-        active_standards = {0: [], 1: [], 2: []}
+        for current_sid, button in self.reference_buttons.items():
+            if button.isChecked() and current_sid in aggregated and len(aggregated[current_sid]) == 3:
+                button.click()
+                break
 
-        # Default behavior for predefined references: when newly marked, enable as references by default
-        predefined_reference_rf = {
-            0: [self.atranorin_standards.get(0), self.atranorin_standards.get(1), self.atranorin_standards.get(2)],
-            -1: [self.norstictic_standards.get(0), self.norstictic_standards.get(1), self.norstictic_standards.get(2)],
-            -2: [self.rhizocarpic_standards.get(0), self.rhizocarpic_standards.get(1), self.rhizocarpic_standards.get(2)],
-            -3: [self.lecanoric_standards.get(0), self.lecanoric_standards.get(1), self.lecanoric_standards.get(2)],
-            -4: [self.evernic_standards.get(0), self.evernic_standards.get(1), self.evernic_standards.get(2)],
-        }
-        for ref_sid, ref_rf in predefined_reference_rf.items():
+    def _ensure_predefined_reference_state(self, aggregated):
+        """Enable configured predefined references when they are newly marked on a plate."""
+        for ref_sid, ref_rf in predefined_reference_rf_values().items():
             if ref_sid in aggregated and ref_sid in self.samples:
                 if 'is_reference' not in self.samples[ref_sid]:
                     self.samples[ref_sid]['is_reference'] = True
                     self.samples[ref_sid]['reference_rf'] = ref_rf
 
-        # Check predefined references only when enabled via checkbox (is_reference=True)
-        if 0 in aggregated and self.samples.get(0, {}).get('is_reference', False):
-             for idx, vals in aggregated[0].items():
-                 if vals and idx in self.atranorin_standards:
-                     active_standards[idx].append((vals[0], self.atranorin_standards[idx]))
+    def _build_active_standards(self, aggregated):
+        """Return active calibration points per plate as observed Rf -> standard Rf pairs."""
+        active_standards = {0: [], 1: [], 2: []}
 
-        if -1 in aggregated and self.samples.get(-1, {}).get('is_reference', False):
-             for idx, vals in aggregated[-1].items():
-                 if vals and idx in self.norstictic_standards:
-                     active_standards[idx].append((vals[0], self.norstictic_standards[idx]))
+        for ref_sid, standard in REFERENCE_STANDARDS.items():
+            if ref_sid in aggregated and self.samples.get(ref_sid, {}).get('is_reference', False):
+                for idx, vals in aggregated[ref_sid].items():
+                    if vals and idx in standard.rf_by_plate:
+                        active_standards[idx].append((vals[0], standard.rf_by_plate[idx]))
 
-        if -2 in aggregated and self.samples.get(-2, {}).get('is_reference', False):
-             for idx, vals in aggregated[-2].items():
-                 if vals and idx in self.rhizocarpic_standards:
-                     active_standards[idx].append((vals[0], self.rhizocarpic_standards[idx]))
-
-        if -3 in aggregated and self.samples.get(-3, {}).get('is_reference', False):
-             for idx, vals in aggregated[-3].items():
-                 if vals and idx in self.lecanoric_standards:
-                     active_standards[idx].append((vals[0], self.lecanoric_standards[idx]))
-
-        if -4 in aggregated and self.samples.get(-4, {}).get('is_reference', False):
-             for idx, vals in aggregated[-4].items():
-                 if vals and idx in self.evernic_standards:
-                     active_standards[idx].append((vals[0], self.evernic_standards[idx]))
-
-        # Check additional reference substances (sid > 0 with is_reference flag)
         for sid, sdata in self.samples.items():
             if sid > 0 and sdata.get('is_reference', False) and sid in aggregated:
                 ref_rf = sdata.get('reference_rf')
@@ -2764,11 +2526,16 @@ class MainWindow(QMainWindow):
                     for idx, vals in aggregated[sid].items():
                         if vals and idx < len(ref_rf) and ref_rf[idx] is not None:
                             active_standards[idx].append((vals[0], ref_rf[idx]))
-                            _safe_print(f"DEBUG: Added reference substance {sid} (name: {sdata.get('assigned_name')}) to plate {idx} calibration: observed={vals[0]:.3f}, std={ref_rf[idx]:.3f}")
+                            self._safe_print(
+                                f"DEBUG: Added reference substance {sid} (name: {sdata.get('assigned_name')}) "
+                                f"to plate {idx} calibration: observed={vals[0]:.3f}, std={ref_rf[idx]:.3f}"
+                            )
 
         for idx in active_standards:
             active_standards[idx].sort(key=lambda x: x[0])
+        return active_standards
 
+    def _build_rf_class_reference_positions(self):
         rf_class_reference_positions = {}
         if self.samples.get(0, {}).get('is_reference', False) and self.samples.get(-1, {}).get('is_reference', False):
             for plate_idx, slot in enumerate(self.slots):
@@ -2776,441 +2543,25 @@ class MainWindow(QMainWindow):
                 norstictic_spot = next((spot for spot in slot.image_label.spots if spot['sample_id'] == -1), None)
                 if atranorin_spot is not None and norstictic_spot is not None:
                     rf_class_reference_positions[plate_idx] = (atranorin_spot['y'], norstictic_spot['y'])
+        return rf_class_reference_positions
 
-        self._apply_support_line_mapping(active_standards, rf_class_reference_positions)
-
-        # Debug output: Show which reference substances are used for each plate
-        _safe_print("=" * 80)
-        _safe_print("CALIBRATION REFERENCE SUBSTANCES PER PLATE")
-        _safe_print("=" * 80)
+    def _debug_print_calibration(self, active_standards):
+        self._safe_print("=" * 80)
+        self._safe_print("CALIBRATION REFERENCE SUBSTANCES PER PLATE")
+        self._safe_print("=" * 80)
         for idx in [0, 1, 2]:
             standards = active_standards[idx]
-            _safe_print(f"\nPlate {['A', 'B', 'C'][idx]}:")
+            self._safe_print(f"\nPlate {['A', 'B', 'C'][idx]}:")
             if not standards:
-                _safe_print("  No reference standards active - using raw Rf values")
+                self._safe_print("  No reference standards active - using raw Rf values")
             else:
-                _safe_print("  Calibration points (observed Rf -> standard Rf):")
-                # Identify which reference substances are being used
+                self._safe_print("  Calibration points (observed Rf -> standard Rf):")
                 for obs, std in standards:
-                    # Identify which standard this is
-                    std_name = "Unknown"
-                    if std in self.atranorin_standards.values():
-                        std_name = "Atranorin"
-                    elif std in self.norstictic_standards.values():
-                        std_name = "Norstictic Acid"
-                    elif std in self.rhizocarpic_standards.values():
-                        std_name = "Rhizocarpic Acid"
-                    elif std in self.lecanoric_standards.values():
-                        std_name = "Lecanoric Acid"
-                    elif std in self.evernic_standards.values():
-                        std_name = "Evernic Acid"
-                    else:
-                        # Check if it's a user-defined reference substance
-                        for sid, sdata in self.samples.items():
-                            if sdata.get('is_reference', False) and sdata.get('reference_rf'):
-                                ref_rf = sdata['reference_rf']
-                                if idx < len(ref_rf) and ref_rf[idx] == std:
-                                    std_name = sdata.get('assigned_name', f"Substance {sid}")
-                                    break
-                    _safe_print(f"    {std_name}: {obs:.3f} -> {std:.3f}")
-        _safe_print("=" * 80)
+                    std_name = self._reference_name_for_standard_value(idx, std)
+                    self._safe_print(f"    {std_name}: {obs:.3f} -> {std:.3f}")
+        self._safe_print("=" * 80)
 
-        # Store Scroll Position
-        v_scroll = self.results_table.verticalScrollBar().value()
-        h_scroll = self.results_table.horizontalScrollBar().value()
-        header = self.results_table.horizontalHeader()
-        sort_column = header.sortIndicatorSection()
-        sort_order = header.sortIndicatorOrder()
-        self.results_table.setSortingEnabled(False)
-
-        # Render to Table
-        self.results_table.setRowCount(0)
-        sorted_ids = sorted(aggregated.keys())
-
-        # Print debug header for predictions
-        _safe_print("=" * 80)
-        _safe_print("SUBSTANCE PREDICTIONS")
-        _safe_print("=" * 80)
-
-        for sid in sorted_ids:
-            if sid not in self.samples:
-                continue
-
-            color = self.samples[sid]['color']
-
-            # Prepare row data
-            current_row = self.results_table.rowCount()
-            self.results_table.insertRow(current_row)
-
-            # 1. Color Column
-            color_item = QTableWidgetItem()
-            color_item.setBackground(color)
-            color_item.setData(Qt.ItemDataRole.UserRole, sid) # Store SID
-            color_item.setFlags(Qt.ItemFlag.NoItemFlags) # Non-editable/selectable
-            self.results_table.setItem(current_row, self.RESULTS_COL_COLOR, color_item)
-
-            # 2. Substance Name (Clickable Link)
-            name_text = self.samples[sid].get('assigned_name')
-            if not name_text:
-                name_text = self.samples[sid]['name']
-
-            name_item = SortableTableWidgetItem(name_text)
-            name_item.setData(Qt.ItemDataRole.UserRole, name_text.casefold())
-            name_item.setData(Qt.ItemDataRole.UserRole + 1, sid)
-            name_item.setForeground(QColor("steelblue"))
-            name_item.setToolTip("Click to edit this substance; right-click to remove it")
-            self.results_table.setItem(current_row, self.RESULTS_COL_SUBSTANCE, name_item)
-
-            # Columns for A, B, C
-            plate_data = aggregated[sid]
-            prediction_input = {}
-            # Keep filter-tag state available even when no predictions are run (e.g. references)
-            current_substance_group = self.samples[sid].get('filter_group')
-            current_filter = current_substance_group
-            current_genus = self.samples[sid].get('filter_genus')
-            current_family = self.samples[sid].get('filter_family')
-
-            # Collect calibration info for this substance
-            calibration_info = []
-
-            for plate_idx, label in enumerate(self.plate_labels):
-                col_idx = self.RESULTS_COL_PLATE_A + plate_idx
-
-                val_str = "-"
-                sort_value = float("inf")
-                if plate_idx in plate_data:
-                    raw_val = plate_data[plate_idx][0]
-
-                    # Apply calibration based on this plate's calibration mode.
-                    standards = active_standards.get(plate_idx, [])
-                    calibration_mode = self.get_plate_calibration_mode(plate_idx)
-                    corrected_val = raw_val  # Default (no correction)
-
-                    if calibration_mode == CALIBRATION_MODE_LINEAR:
-                        # Linear Interpolation Calibration
-                        # Include boundary points (0,0) and (1,1)
-                        points = [(0.0, 0.0)] + standards + [(1.0, 1.0)]
-
-                        used_standards = []
-                        for j in range(len(points) - 1):
-                            x1, y1 = points[j]
-                            x2, y2 = points[j+1]
-                            if x1 <= raw_val <= x2:
-                                if abs(x2 - x1) > 1e-7:
-                                    corrected_val = y1 + (raw_val - x1) * (y2 - y1) / (x2 - x1)
-                                else:
-                                    corrected_val = y1
-                                # Identify which standards were used for this calibration
-                                for k in range(len(standards)):
-                                    if standards[k] == points[j]:
-                                        std_obs, std_val = standards[k]
-                                        # Identify standard name
-                                        if std_val in self.atranorin_standards.values():
-                                            std_name = "Atranorin"
-                                        elif std_val in self.norstictic_standards.values():
-                                            std_name = "Norstictic Acid"
-                                        elif std_val in self.rhizocarpic_standards.values():
-                                            std_name = "Rhizocarpic Acid"
-                                        elif std_val in self.lecanoric_standards.values():
-                                            std_name = "Lecanoric Acid"
-                                        elif std_val in self.evernic_standards.values():
-                                            std_name = "Evernic Acid"
-                                        else:
-                                            # Check user-defined reference substances
-                                            std_name = "Unknown"
-                                            for ref_sid, sdata in self.samples.items():
-                                                if sdata.get('is_reference', False) and sdata.get('reference_rf'):
-                                                    ref_rf = sdata['reference_rf']
-                                                    if plate_idx < len(ref_rf) and ref_rf[plate_idx] == std_val:
-                                                        std_name = sdata.get('assigned_name', f"Substance {ref_sid}")
-                                                        break
-                                        used_standards.append(std_name)
-                                    if standards[k] == points[j+1]:
-                                        std_obs, std_val = standards[k]
-                                        if std_val in self.atranorin_standards.values():
-                                            std_name = "Atranorin"
-                                        elif std_val in self.norstictic_standards.values():
-                                            std_name = "Norstictic Acid"
-                                        elif std_val in self.rhizocarpic_standards.values():
-                                            std_name = "Rhizocarpic Acid"
-                                        elif std_val in self.lecanoric_standards.values():
-                                            std_name = "Lecanoric Acid"
-                                        elif std_val in self.evernic_standards.values():
-                                            std_name = "Evernic Acid"
-                                        else:
-                                            std_name = "Unknown"
-                                            for ref_sid, sdata in self.samples.items():
-                                                if sdata.get('is_reference', False) and sdata.get('reference_rf'):
-                                                    ref_rf = sdata['reference_rf']
-                                                    if plate_idx < len(ref_rf) and ref_rf[plate_idx] == std_val:
-                                                        std_name = sdata.get('assigned_name', f"Substance {ref_sid}")
-                                                        break
-                                        used_standards.append(std_name)
-                                break
-
-                        # Record calibration info for this plate
-                        calibration_info.append({
-                            'plate': label,
-                            'raw': raw_val,
-                            'corrected': corrected_val,
-                            'standards': used_standards,
-                            'mode': CALIBRATION_MODE_LINEAR
-                        })
-
-                    else:  # nearest-reference mode
-                        if standards:
-                            # Find the closest reference substance by observed Rf value
-                            closest_std = None
-                            min_dist = float('inf')
-                            for obs_rf, std_rf in standards:
-                                dist = abs(raw_val - obs_rf)
-                                if dist < min_dist:
-                                    min_dist = dist
-                                    closest_std = (obs_rf, std_rf)
-
-                            if closest_std:
-                                obs_rf, std_rf = closest_std
-                                # Apply correction based on the nearest reference
-                                # The correction shifts the observed value to match the reference scale
-                                corrected_val = self._correct_plate_rf(raw_val, standards, calibration_mode)
-
-                                # Identify the reference substance name
-                                std_name = "Unknown"
-                                if std_rf in self.atranorin_standards.values():
-                                    std_name = "Atranorin"
-                                elif std_rf in self.norstictic_standards.values():
-                                    std_name = "Norstictic Acid"
-                                elif std_rf in self.rhizocarpic_standards.values():
-                                    std_name = "Rhizocarpic Acid"
-                                elif std_rf in self.lecanoric_standards.values():
-                                    std_name = "Lecanoric Acid"
-                                elif std_rf in self.evernic_standards.values():
-                                    std_name = "Evernic Acid"
-                                else:
-                                    for ref_sid, sdata in self.samples.items():
-                                        if sdata.get('is_reference', False) and sdata.get('reference_rf'):
-                                            ref_rf = sdata['reference_rf']
-                                            if plate_idx < len(ref_rf) and ref_rf[plate_idx] == std_rf:
-                                                std_name = sdata.get('assigned_name', f"Substance {ref_sid}")
-                                                break
-
-                                calibration_info.append({
-                                    'plate': label,
-                                    'raw': raw_val,
-                                    'corrected': corrected_val,
-                                    'standards': [std_name],
-                                    'mode': CALIBRATION_MODE_NEAREST
-                                })
-                            else:
-                                calibration_info.append({
-                                    'plate': label,
-                                    'raw': raw_val,
-                                    'corrected': corrected_val,
-                                    'standards': [],
-                                    'mode': CALIBRATION_MODE_NEAREST
-                                })
-                        else:
-                            calibration_info.append({
-                                'plate': label,
-                                'raw': raw_val,
-                                'corrected': corrected_val,
-                                'standards': [],
-                                'mode': CALIBRATION_MODE_NEAREST
-                            })
-
-                    prediction_input[plate_idx] = corrected_val
-                    val_str = self.format_rf_value(corrected_val)
-                    sort_value = corrected_val
-
-                item = SortableTableWidgetItem(val_str)
-                item.setData(Qt.ItemDataRole.UserRole, sort_value)
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.results_table.setItem(current_row, col_idx, item)
-
-            # Print debug output for this substance's calibration
-            if sid > 0 and calibration_info:
-                _safe_print(f"\nSubstance: {self.samples[sid].get('assigned_name') or self.samples[sid]['name']}")
-                _safe_print("-" * 80)
-                for cal in calibration_info:
-                    _safe_print(f"  Plate {cal['plate']}: Rf raw={cal['raw']:.3f} -> corrected={cal['corrected']:.3f} (mode: {cal['mode']})")
-                    if cal['standards']:
-                        # Show which reference substance(s) were used for Rf correction
-                        if len(cal['standards']) == 1:
-                            _safe_print(f"    Rf correction using reference: {cal['standards'][0]}")
-                        else:
-                            _safe_print(f"    Rf correction using references: {' and '.join(cal['standards'])}")
-                            _safe_print(f"    (Interpolation between calibration points)")
-                    else:
-                        _safe_print(f"    No Rf correction applied (no reference standards on this plate)")
-                _safe_print("-" * 80)
-
-            # 3. Predictions
-            matches = []
-            if sid > 0 and prediction_input:
-                # Re-read in case filter state changed in the meantime
-                current_substance_group = self.samples[sid].get('filter_group')
-                current_filter = current_substance_group
-                current_genus = self.samples[sid].get('filter_genus')
-                current_family = self.samples[sid].get('filter_family')
-                f_vis = self.samples[sid].get('filter_vis', False)
-                f_uvs = self.samples[sid].get('filter_uvs', False)
-                f_uvl = self.samples[sid].get('filter_uvl', False)
-                f_aft_vis = self.samples[sid].get('filter_aft_vis')
-                f_aft_uv = self.samples[sid].get('filter_aft_uv')
-
-                matches = self.predict_matches(prediction_input,
-                                               filter_group=current_filter,
-                                               filter_genus=current_genus,
-                                               filter_family=current_family,
-                                               filter_vis=f_vis,
-                                               filter_uvs=f_uvs,
-                                               filter_uvl=f_uvl,
-                                               filter_aft_vis=f_aft_vis,
-                                               filter_aft_uv=f_aft_uv,
-                                               allow_missing_rf_values=self.sample_allows_missing_rf_values(sid))
-
-                # Print prediction results
-                _safe_print(f"  Predictions ({len(matches)} match{'es' if len(matches) != 1 else ''}):")
-                if matches:
-                    for i, (score, name) in enumerate(matches[:10], 1):  # Show first 10
-                        _safe_print(f"    {i}. {name} (score: {score:.6f})")
-                    if len(matches) > 10:
-                        _safe_print(f"    ... and {len(matches) - 10} more")
-                else:
-                    _safe_print(f"    No matches found")
-
-            pred_label = QLabel()
-            self.samples[sid]['last_matches'] = matches
-
-            # Guard against unset/non-string values while preserving visible active filters
-            current_filter = current_filter or ""
-            current_genus = current_genus or ""
-            current_family = current_family or ""
-            f_vis = bool(self.samples[sid].get('filter_vis', False))
-            f_uvs = bool(self.samples[sid].get('filter_uvs', False))
-            f_uvl = bool(self.samples[sid].get('filter_uvl', False))
-            f_aft_vis = self.samples[sid].get('filter_aft_vis') or ""
-            f_aft_uv = self.samples[sid].get('filter_aft_uv') or ""
-
-            filter_tags = ""
-            if current_filter:
-                filter_tags += f" <small style='color:gray'>[{current_filter}]</small>"
-            if current_genus:
-                filter_tags += f" <small style='color:gray'>[Genus: {current_genus}]</small>"
-            if current_family:
-                filter_tags += f" <small style='color:gray'>[Family: {current_family}]</small>"
-            if f_vis:
-                filter_tags += " <small style='color:gray'>[Vis]</small>"
-            if f_uvs:
-                filter_tags += " <small style='color:gray'>[UVS]</small>"
-            if f_uvl:
-                filter_tags += " <small style='color:gray'>[UVL]</small>"
-            if f_aft_vis:
-                filter_tags += f" <small style='color:gray'>[After Vis: {f_aft_vis}]</small>"
-            if f_aft_uv:
-                filter_tags += f" <small style='color:gray'>[After UV: {f_aft_uv}]</small>"
-
-            if matches:
-                 display_matches = matches[:5]
-                 match_links = []
-                 for score, name in display_matches:
-                     # URL-encode link targets so special characters (e.g. apostrophes) don't break HTML links
-                     encoded_name = quote(name, safe='')
-                     display_name = html.escape(name)
-                     match_links.append(
-                         f'<a href="substance:{encoded_name}" title="Match score: {score:.6f}">{display_name}</a>'
-                     )
-                 match_str = ", ".join(match_links)
-
-                 if len(matches) > 5:
-                     more_count = len(matches) - 5
-                     match_str += f" + {more_count} more"
-                     # keep for reference: This was for QMessageBox implementation of additional results:
-                     #match_str += f" <a href='show_more:{sid}' style='color:blue;'>+{more_count} more</a>"
-
-                 match_str += filter_tags
-                 pred_label.setText(match_str)
-                 pred_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
-                 pred_label.linkActivated.connect(self.handle_link_click)
-                 if not hasattr(self, '_prediction_hover_link_by_sid'):
-                     self._prediction_hover_link_by_sid = {}
-                 pred_label.linkHovered.connect(
-                     lambda link, sid=sid: self._prediction_hover_link_by_sid.__setitem__(sid, link)
-                 )
-                 pred_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                 pred_label.customContextMenuRequested.connect(
-                     lambda pos, sid=sid, w=pred_label: self.show_prediction_context_menu(sid, w, pos)
-                 )
-            else:
-                pred_label.setText(f"-{filter_tags}" if filter_tags else "-")
-
-            pred_label.setContentsMargins(5, 0, 5, 0)
-            self.results_table.setCellWidget(current_row, self.RESULTS_COL_PREDICTIONS, pred_label)
-
-            # 4. Reference Checkbox
-            # Show checkboxes for regular substances and predefined reference substances
-            reference_sids = {0, -1, -2, -3, -4}
-            if sid > 0 or sid in reference_sids:
-                ref_container = QWidget2()
-                ref_layout = QHBoxLayout(ref_container)
-                ref_layout.setContentsMargins(0, 0, 0, 0)
-                ref_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-                ref_checkbox = QCheckBox()
-
-                if sid in reference_sids:
-                    # For predefined references, allow toggling only when marked on plates
-                    is_marked_on_plates = sid in aggregated and len(aggregated[sid]) > 0
-                    if not is_marked_on_plates:
-                        self.samples[sid]['is_reference'] = False
-                        self.samples[sid]['reference_rf'] = None
-                    ref_checkbox.setChecked(self.samples[sid].get('is_reference', False))
-                    ref_checkbox.setEnabled(is_marked_on_plates)
-                else:
-                    # Regular substances
-                    ref_checkbox.setChecked(self.samples[sid].get('is_reference', False))
-
-                ref_checkbox.stateChanged.connect(lambda state, sid=sid: self.handle_reference_checkbox(state, sid))
-
-                ref_layout.addWidget(ref_checkbox)
-                self.results_table.setCellWidget(current_row, self.RESULTS_COL_REFERENCE, ref_container)
-
-                # Sort value: 0 = checked (reference) → appears first; 1 = unchecked → appears after
-                is_ref = self.samples[sid].get('is_reference', False)
-                ref_sort_item = SortableTableWidgetItem()
-                ref_sort_item.setData(Qt.ItemDataRole.UserRole, 0 if is_ref else 1)
-                ref_sort_item.setFlags(Qt.ItemFlag.NoItemFlags)
-                self.results_table.setItem(current_row, self.RESULTS_COL_REFERENCE, ref_sort_item)
-            else:
-                empty_label = QLabel()
-                empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.results_table.setCellWidget(current_row, self.RESULTS_COL_REFERENCE, empty_label)
-
-                ref_sort_item = SortableTableWidgetItem()
-                ref_sort_item.setData(Qt.ItemDataRole.UserRole, 2)  # Non-reference rows sort last
-                ref_sort_item.setFlags(Qt.ItemFlag.NoItemFlags)
-                self.results_table.setItem(current_row, self.RESULTS_COL_REFERENCE, ref_sort_item)
-
-            # 5. All Results Button
-            # Show button only for regular substances (sid > 0) with predictions
-            if sid > 0 and matches:
-                results_button = QPushButton("View All")
-                results_button.setProperty('sid', sid)
-                results_button.clicked.connect(lambda checked, s=sid, m=matches, p=prediction_input, n=self.samples[sid].get('assigned_name') or self.samples[sid]['name']: self.show_prediction_results(s, m, p, n))
-                self.results_table.setCellWidget(current_row, self.RESULTS_COL_ALL_RESULTS, results_button)
-            else:
-                empty_button_label = QLabel()
-                empty_button_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.results_table.setCellWidget(current_row, self.RESULTS_COL_ALL_RESULTS, empty_button_label)
-
-        # Restore Scroll Position
-        self.results_table.setSortingEnabled(True)
-        if sort_column >= 0:
-            self.results_table.sortItems(sort_column, sort_order)
-        self.results_table.verticalScrollBar().setValue(v_scroll)
-        self.results_table.horizontalScrollBar().setValue(h_scroll)
-
-        # Update Name Mapping and Font Sizes in slots
+    def _update_plate_name_and_font_maps(self):
         name_map = {}
         font_size_map = {}
         for sid, sdata in self.samples.items():
@@ -3223,24 +2574,27 @@ class MainWindow(QMainWindow):
             slot.image_label.set_global_names(name_map)
             slot.image_label.set_global_font_sizes(font_size_map)
 
-        # Print closing summary
-        _safe_print("=" * 80)
-        _safe_print(f"PREDICTION COMPLETE: Processed {len([sid for sid in sorted_ids if sid > 0])} substances")
-        _safe_print("=" * 80)
-        _safe_print()
+    def _render_result_rows(self, aggregated, active_standards):
+        self.results_renderer.render(aggregated, active_standards)
 
-        # Update reference button colors when marked on all three plates
+    def update_results_display(self):
+        aggregated = self._aggregate_spots()
+        self._sync_samples_with_aggregated_spots(aggregated)
+        self._auto_stop_completed_marking(aggregated)
+        self._ensure_predefined_reference_state(aggregated)
+        active_standards = self._build_active_standards(aggregated)
+        rf_class_refs = self._build_rf_class_reference_positions()
+        self._apply_support_line_mapping(active_standards, rf_class_refs)
+        self._debug_print_calibration(active_standards)
+        self._render_result_rows(aggregated, active_standards)
+        self._update_plate_name_and_font_maps()
         self._update_reference_button_colors(aggregated)
 
     def _update_reference_button_colors(self, aggregated):
         """Update the text color of reference substance buttons when marked on all three plates."""
-        # Reference substance ID to button and color mapping
         ref_button_config = [
-            (0, self.mark_atranorin_button, "red"),
-            (-1, self.mark_norstictic_button, "gold"),
-            (-2, self.mark_rhizocarpic_button, "orange"),
-            (-3, self.mark_lecanoric_button, "limegreen"),
-            (-4, self.mark_evernic_button, "magenta"),
+            (sid, self.reference_buttons[sid], standard.color_name)
+            for sid, standard in REFERENCE_STANDARDS.items()
         ]
 
         for sid, button, color in ref_button_config:
@@ -3268,7 +2622,6 @@ class MainWindow(QMainWindow):
                         self.slots[i].set_loaded_image(pixmap, full_path)
 
     def save_analysis(self):
-        import json
         suggested_path = self.analysis_file_path or ""
         file_name, _ = QFileDialog.getSaveFileName(
             self, "Save Analysis", suggested_path, "JSON Files (*.json)"
@@ -3276,60 +2629,8 @@ class MainWindow(QMainWindow):
         if not file_name:
             return False
 
-        data = {
-            "version": 2,
-            "detection_method": self.detection_method,
-            "detection_range": self.detection_range,
-            "relative_rf_display": self.relative_rf_display,
-            "allow_missing_rf_values": self.allow_missing_rf_values,
-            "display_support_lines": self.display_support_lines,
-            "display_rf_classes": self.display_rf_classes,
-            "plate_ranges": self.plate_ranges,
-            "plate_calibration_modes": self.plate_calibration_modes,
-            "samples": {},
-            "plates": []
-        }
-
-        # Save sample metadata, including explicit colors so custom spot colors persist.
-        for sid, sdata in self.samples.items():
-            sample_data = {
-                "color": _serialize_qcolor(sdata.get("color")),
-                "name": sdata["name"],
-                "assigned_name": sdata.get('assigned_name'),
-                "show_on_plate": sdata.get('show_on_plate', False),
-                "filter_group": sdata.get('filter_group'),
-                "filter_genus": sdata.get('filter_genus'),
-                "filter_family": sdata.get('filter_family'),
-                "filter_vis": sdata.get('filter_vis', False),
-                "filter_uvs": sdata.get('filter_uvs', False),
-                "filter_uvl": sdata.get('filter_uvl', False),
-                "filter_aft_vis": sdata.get('filter_aft_vis'),
-                "filter_aft_uv": sdata.get('filter_aft_uv'),
-                "font_size": sdata.get('font_size', 8),
-                "allow_missing_rf_values": sdata.get('allow_missing_rf_values', False),
-                "is_reference": sdata.get('is_reference', False),
-                "reference_rf": sdata.get('reference_rf')
-            }
-            data["samples"][sid] = sample_data
-
-        # Save Plates
-        for i, slot in enumerate(self.slots):
-            plate_data = {
-                "id": i,
-                "image_path": slot.image_path,
-                "start_line_y": slot.image_label.start_line_y,
-                "front_line_y": slot.image_label.front_line_y,
-                "show_support_lines": slot.image_label.show_support_lines,
-                "show_rf_classes": slot.rf_classes_checked(),
-                "calibration_mode": self.get_plate_calibration_mode(i),
-                "custom_lines": slot.image_label.custom_lines,
-                "spots": slot.image_label.spots
-            }
-            data["plates"].append(plate_data)
-
         try:
-            with open(file_name, 'w') as f:
-                json.dump(data, f, indent=4)
+            AnalysisSerializer.save_to_path(file_name, AnalysisSerializer.from_window_state(self))
             self.analysis_file_path = file_name
             return True
         except Exception as e:
@@ -3338,8 +2639,6 @@ class MainWindow(QMainWindow):
             return False
 
     def load_analysis(self):
-        import json
-        import os
         file_name, _ = QFileDialog.getOpenFileName(
             self, "Load Analysis", "", "JSON Files (*.json)"
         )
@@ -3347,189 +2646,9 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            with open(file_name, 'r') as f:
-                data = json.load(f)
+            data = AnalysisSerializer.load_from_path(file_name)
             self.analysis_file_path = file_name
-
-            # Reset State
-            self.samples = {} # Clear samples
-
-            # Load Detection Settings
-            if "detection_method" in data:
-                 self.detection_method = data["detection_method"]
-            if "detection_range" in data:
-                 self.detection_range = float(data["detection_range"])
-            if "relative_rf_display" in data:
-                 self.relative_rf_display = bool(data["relative_rf_display"])
-            if "allow_missing_rf_values" in data:
-                 self.allow_missing_rf_values = bool(data["allow_missing_rf_values"])
-            if "display_support_lines" in data:
-                 self.display_support_lines = bool(data["display_support_lines"])
-            else:
-                 self.display_support_lines = any(
-                     bool(plate.get("show_support_lines", False))
-                     for plate in data.get("plates", [])
-                 )
-            if "display_rf_classes" in data:
-                 self.display_rf_classes = bool(data["display_rf_classes"])
-            if "plate_ranges" in data:
-                 self.plate_ranges = {int(k): v for k, v in data["plate_ranges"].items()}
-            legacy_calibration_mode = _normalize_calibration_mode(data.get("calibration_mode", CALIBRATION_MODE_LINEAR))
-            self.calibration_mode = legacy_calibration_mode
-            if "plate_calibration_modes" in data:
-                 self.plate_calibration_modes = {
-                     int(k): _normalize_calibration_mode(v)
-                     for k, v in data["plate_calibration_modes"].items()
-                 }
-            else:
-                 self.plate_calibration_modes = {
-                     i: legacy_calibration_mode for i in range(len(self.slots))
-                 }
-
-            # Update UI for detection settings
-            self.update_detection_status_label()
-
-            # Apply relative/absolute display mode and per-plate ranges
-            for i, slot in enumerate(self.slots):
-                slot.set_relative_rf_display(self.relative_rf_display)
-                slot.set_range(self.plate_ranges.get(i, 0.05))
-                slot.set_calibration_mode(self.get_plate_calibration_mode(i))
-
-            # Block signals on all image labels during loading to prevent
-            # premature update_results_display calls (which would remove
-            # substances from self.samples before their spots are loaded)
-            for slot in self.slots:
-                slot.image_label.blockSignals(True)
-                slot._action_support_lines.setChecked(False)
-                slot.image_label.show_support_lines = False
-                slot.image_label.custom_lines = []
-                slot.set_custom_line_controls_enabled(False)
-
-            # Determine next sample id (max id + 1)
-            max_sid = 0
-
-            # Restore Samples
-            for sid_str, sdata in data.get("samples", {}).items():
-                sid = int(sid_str)
-                if sid > max_sid:
-                    max_sid = sid
-                color = _deserialize_qcolor(sdata.get("color"))
-                if color is None:
-                    # Backward compatibility: older analysis files relied on deterministic colors.
-                    if sid == 0:
-                        color = QColor("red")       # Atranorin reference
-                    elif sid == -1:
-                        color = QColor("gold")    # Norstictic Acid reference
-                    elif sid == -2:
-                        color = QColor("orange")    # Rhizocarpic Acid reference
-                    elif sid == -3:
-                        color = QColor("limegreen")      # Lecanoric Acid reference
-                    elif sid == -4:
-                        color = QColor("magenta")   # Evernic Acid reference
-                    else:
-                        color = self.colors[(sid - 1) % len(self.colors)]
-                self.samples[sid] = {
-                    'color': color,
-                    'name': sdata['name'],
-                    'assigned_name': sdata.get('assigned_name'),
-                    'show_on_plate': sdata.get('show_on_plate', False),
-                    'filter_group': sdata.get('filter_group'),
-                    'filter_genus': sdata.get('filter_genus'),
-                    'filter_family': sdata.get('filter_family'),
-                    'filter_vis': sdata.get('filter_vis', False),
-                    'filter_uvs': sdata.get('filter_uvs', False),
-                    'filter_uvl': sdata.get('filter_uvl', False),
-                    'filter_aft_vis': sdata.get('filter_aft_vis'),
-                    'filter_aft_uv': sdata.get('filter_aft_uv'),
-                    'font_size': sdata.get('font_size', 8),
-                    'allow_missing_rf_values': sdata.get('allow_missing_rf_values', False),
-                    'is_reference': sdata.get('is_reference', False),
-                    'reference_rf': sdata.get('reference_rf')
-                }
-
-            self.next_sample_id = max_sid + 1
-
-            # Update Slots
-            plates_data = data.get("plates", [])
-            for plate_info in plates_data:
-                idx = plate_info.get("id")
-                if idx is not None and 0 <= idx < len(self.slots):
-                    slot = self.slots[idx]
-                    path = plate_info.get("image_path")
-                    start_y = plate_info.get("start_line_y", 0.9)
-                    front_y = plate_info.get("front_line_y", 0.1)
-                    show_support_lines = bool(plate_info.get("show_support_lines", self.display_support_lines))
-                    show_rf_classes = bool(plate_info.get("show_rf_classes", self.display_rf_classes))
-                    calibration_mode = _normalize_calibration_mode(
-                        plate_info.get("calibration_mode", self.get_plate_calibration_mode(idx))
-                    )
-                    custom_lines = plate_info.get("custom_lines", [])
-                    spots = plate_info.get("spots", [])
-
-                    if path and os.path.exists(path):
-                        pixmap = QPixmap(path)
-                        if not pixmap.isNull():
-                            slot.set_loaded_image(pixmap, path, show_start_line_adjust_hint=False)
-
-                    # Set Lines
-                    slot.image_label.start_line_y = start_y
-                    slot.image_label.front_line_y = front_y
-                    slot._action_support_lines.setChecked(show_support_lines)
-                    slot._action_rf_classes.setChecked(show_rf_classes)
-                    slot.set_calibration_mode(calibration_mode)
-                    self.plate_calibration_modes[idx] = calibration_mode
-                    slot.image_label.show_support_lines = show_support_lines
-                    safe_custom_lines = []
-                    for line in custom_lines:
-                        orientation = line.get("orientation")
-                        if orientation not in {"horizontal", "vertical"}:
-                            continue
-                        try:
-                            position = float(line.get("position", 0.5))
-                        except (TypeError, ValueError):
-                            position = 0.5
-                        safe_custom_lines.append({
-                            "orientation": orientation,
-                            "position": max(0.0, min(1.0, position)),
-                        })
-                    slot.image_label.custom_lines = safe_custom_lines
-                    
-                    # Set Spots
-                    # Ensure spots have integer sample_id as saved
-                    safe_spots = []
-                    for s in spots:
-                        safe_spots.append({
-                            'sample_id': int(s['sample_id']),
-                            'x': s['x'],
-                            'y': s['y']
-                        })
-                    slot.image_label.spots = safe_spots
-
-            # Unblock signals now that all data is loaded
-            for slot in self.slots:
-                slot.image_label.blockSignals(False)
-
-            # Global Updates
-            color_map = {k: v['color'] for k, v in self.samples.items()}
-            for slot in self.slots:
-                slot.image_label.set_global_colors(color_map)
-                slot.image_label.update()
-
-            self.update_results_display()
-
-            # Update reference button colors based on loaded data
-            # Re-aggregate to check which references are on all plates
-            aggregated = {}
-            for i, slot in enumerate(self.slots):
-                for spot in slot.image_label.spots:
-                    sid = spot['sample_id']
-                    if sid not in aggregated:
-                        aggregated[sid] = {}
-                    if i not in aggregated[sid]:
-                        aggregated[sid][i] = []
-                    aggregated[sid][i].append(0)  # Just need to mark presence
-            self._update_reference_button_colors(aggregated)
-
+            AnalysisSerializer.apply_to_window(self, data)
         except Exception as e:
             print(f"Error loading file: {e}")
 
@@ -3637,21 +2756,12 @@ class MainWindow(QMainWindow):
         # Reset Controls
         if self.mark_substance_button.isChecked():
             self.mark_substance_button.click() # This will toggle it off and reset cursors
-        if self.mark_atranorin_button.isChecked():
-            self.mark_atranorin_button.click()
-        if self.mark_norstictic_button.isChecked():
-            self.mark_norstictic_button.click()
-        if self.mark_rhizocarpic_button.isChecked():
-            self.mark_rhizocarpic_button.click()
-        if self.mark_lecanoric_button.isChecked():
-            self.mark_lecanoric_button.click()
-        if self.mark_evernic_button.isChecked():
-            self.mark_evernic_button.click()
+        for button in self.reference_buttons.values():
+            if button.isChecked():
+                button.click()
 
         # Reset reference button colors
-        for button in [self.mark_atranorin_button, self.mark_norstictic_button,
-                       self.mark_rhizocarpic_button, self.mark_lecanoric_button,
-                       self.mark_evernic_button]:
+        for button in self.reference_buttons.values():
             button.setStyleSheet("")
 
         # Close and clear all open characteristics windows
@@ -3707,189 +2817,35 @@ class MainWindow(QMainWindow):
         self.update_results_display()
 
     def load_reference_data(self):
-        self.reference_data = []
-        self.genus_to_substances = {}
-        self.family_to_substances = {}
-        from PyQt6.QtSql import QSqlDatabase, QSqlQuery
-
-        if QSqlDatabase.contains("main_ref_connection"):
-            db = QSqlDatabase.database("main_ref_connection")
-        else:
-            db = QSqlDatabase.addDatabase("QSQLITE", "main_ref_connection")
-
-        db.setDatabaseName(self.db_path)
-
-        if db.open():
-            # Populate Genus Cache - try Lichens table first (new format)
-            gen_query = QSqlQuery(db)
-            if gen_query.exec("SELECT DISTINCT Genus, Family, Substance FROM Lichens"):
-                while gen_query.next():
-                    g = gen_query.value(0)
-                    f = gen_query.value(1)
-                    s = gen_query.value(2)
-                    if g:
-                        if g not in self.genus_to_substances:
-                            self.genus_to_substances[g] = set()
-                        self.genus_to_substances[g].add(s.lower())
-                    if f:
-                        if f not in self.family_to_substances:
-                            self.family_to_substances[f] = set()
-                        self.family_to_substances[f].add(s.lower())
-                print(f"DEBUG: Loaded {len(self.genus_to_substances)} genera and {len(self.family_to_substances)} families with substance mappings from Lichens table")
-            else:
-                # If Lichens table query failed or returned no results, warn about missing genus/family support
-                print(f"DEBUG: Warning - Lichens table not available or empty. Genus/family filtering will not work.")
-
-            tables = ["Substances", "SubstancesBackup"]
-            for table in tables:
-                query = QSqlQuery(db)
-                # Select name, A, Bprime, C, GroupName, Lichens, BefVis, BefUVS, BefUVL, AftVis, AftUV
-                if query.exec(f"SELECT name, A, Bprime, C, GroupName, Lichens, BefVis, BefUVS, BefUVL, AftVis, AftUV FROM {table}"):
-                    while query.next():
-                        name = query.value(0)
-
-                        def parse_rf(val):
-                            if val is None or val == "":
-                                return None
-                            try:
-                                return float(val) / 100.0
-                            except:
-                                return None
-
-                        rf_a = parse_rf(query.value(1))
-                        rf_b = parse_rf(query.value(2))
-                        rf_c = parse_rf(query.value(3))
-                        group_name = query.value(4)
-                        lichens_str = query.value(5)
-                        bef_vis = query.value(6)
-                        bef_uvs = query.value(7)
-                        bef_uvl = query.value(8)
-                        aft_vis = query.value(9)
-                        aft_uv = query.value(10)
-
-                        self.reference_data.append({
-                            'name': name,
-                            'rf': [rf_a, rf_b, rf_c], # Matching slots 0, 1, 2
-                            'GroupName': group_name,
-                            'BefVis': bef_vis,
-                            'BefUVS': bef_uvs,
-                            'BefUVL': bef_uvl,
-                            'AftVis': aft_vis,
-                            'AftUV': aft_uv
-                        })
-            db.close()
+        bundle = self.reference_repository.load_reference_data()
+        self.prediction_service.load_bundle(bundle)
+        self.reference_data = self.prediction_service.reference_data
+        self.genus_to_substances = self.prediction_service.genus_to_substances
+        self.family_to_substances = self.prediction_service.family_to_substances
+        self.reference_rf_by_name = self.prediction_service.reference_rf_by_name
 
     def predict_matches(self, input_data, filter_group=None, filter_genus=None, filter_family=None,
                         filter_vis=False, filter_uvs=False, filter_uvl=False,
                         filter_aft_vis=None, filter_aft_uv=None,
                         allow_missing_rf_values=False):
-        # input_data: {plate_idx: value}
-        # Returns list of top names
+        # Keep compatibility with tests/extensions that mutate these public caches directly.
+        self.prediction_service.reference_data = self.reference_data
+        self.prediction_service.genus_to_substances = self.genus_to_substances
+        self.prediction_service.family_to_substances = self.family_to_substances
+        self.prediction_service.reference_rf_by_name = self.reference_rf_by_name
 
-        scores = []
-        # Detection Setting: self.detection_method ("MSE" or "Range")
-        # Per-plate Detection Ranges: self.plate_ranges
-
-        for item in self.reference_data:
-            name = item['name']
-
-            # Filter by Group
-            if filter_group and item.get('GroupName') != filter_group:
-                continue
-
-            # Filter by Genus (Optimized using Lichens table mapping)
-            if filter_genus:
-                valid_subs = self.genus_to_substances.get(filter_genus, set())
-                if name.lower() not in valid_subs:
-                    continue
-
-            # Filter by Family (Optimized using Lichens table mapping)
-            if filter_family:
-                valid_subs = self.family_to_substances.get(filter_family, set())
-                if name.lower() not in valid_subs:
-                    continue
-
-            # Filter by Visual Characteristics (only if checkbox is checked)
-            # Database marks positive with '+'
-            if filter_vis:
-                if item.get('BefVis') != '+':
-                    continue
-            if filter_uvs:
-                if item.get('BefUVS') != '+':
-                    continue
-            if filter_uvl:
-                if item.get('BefUVL') != '+':
-                    continue
-
-            # Filter by After Treatment Characteristics
-            # Exact match if filter is set
-            if filter_aft_vis:
-                if item.get('AftVis') != filter_aft_vis:
-                    continue
-            if filter_aft_uv:
-                if item.get('AftUV') != filter_aft_uv:
-                    continue
-
-            if self.detection_method == "Range":
-                # Range Logic: compare all plates that have both an observed and reference Rf.
-                # Missing database Rf values are optional and only ignored when enabled.
-                match = True
-                dist = 0.0
-                count = 0
-
-                for plate_idx, obs_val in input_data.items():
-                   if plate_idx < len(item['rf']):
-                        ref_val = item['rf'][plate_idx]
-                        if ref_val is None:
-                            if allow_missing_rf_values:
-                                continue
-                            match = False
-                            break
-
-                        # Use per-plate range
-                        plate_range = self.plate_ranges.get(plate_idx, self.detection_range)
-                        error = abs(obs_val - ref_val)
-                        if error > plate_range:
-                           match = False
-                           break
-
-                        dist += error ** 2
-                        count += 1
-
-                if match and count > 0:
-                    mse = dist / count
-                    scores.append((mse, name))
-
-            else:
-                # MSE Logic
-                match = True
-                dist = 0.0
-                count = 0
-
-                for plate_idx, obs_val in input_data.items():
-                    if plate_idx < len(item['rf']): # Ensure index is valid
-                        ref_val = item['rf'][plate_idx]
-                        if ref_val is None:
-                            if allow_missing_rf_values:
-                                continue
-                            match = False
-                            break
-                        dist += (obs_val - ref_val) ** 2
-                        count += 1
-
-                if match and count > 0:
-                    mse = dist / count
-                    scores.append((mse, name))
-
-        # Sort by score (lowest error first)
-        scores.sort(key=lambda x: x[0])
-
-        # Return all unique names with their scores sorted by score
-        unique_matches = []
-        seen = set()
-        for score, name in scores:
-            if name not in seen:
-                unique_matches.append((score, name))
-                seen.add(name)
-
-        return unique_matches
+        return self.prediction_service.predict(
+            input_data,
+            detection_method=self.detection_method,
+            detection_range=self.detection_range,
+            plate_ranges=self.plate_ranges,
+            filter_group=filter_group,
+            filter_genus=filter_genus,
+            filter_family=filter_family,
+            filter_vis=filter_vis,
+            filter_uvs=filter_uvs,
+            filter_uvl=filter_uvl,
+            filter_aft_vis=filter_aft_vis,
+            filter_aft_uv=filter_aft_uv,
+            allow_missing_rf_values=allow_missing_rf_values,
+        )

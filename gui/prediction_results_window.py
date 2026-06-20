@@ -3,7 +3,9 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget, QTableWidgetIte
                              QCheckBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
-from PyQt6.QtSql import QSqlDatabase, QSqlQuery
+from PyQt6.QtSql import QSqlDatabase
+
+from gui.reference_repository import ReferenceRepository, parse_rf
 
 
 class PredictionResultsWindow(QDialog):
@@ -24,52 +26,25 @@ class PredictionResultsWindow(QDialog):
 
     def parse_rf(self, val):
         """Convert database Rf value (e.g., 45) to 0-1 range (e.g., 0.45)."""
-        if val is None or val == "":
-            return None
-        try:
-            return float(val) / 100.0
-        except:
-            return None
+        return parse_rf(val)
 
     def get_substance_rf_from_db(self, substance_name):
-        """Query the database to get Rf values for a substance."""
-        # Check cache first
+        """Query the configured reference repository to get Rf values for a substance."""
         if substance_name in self.db_rf_values:
             return self.db_rf_values[substance_name]
 
-        # Get database connection
-        db = QSqlDatabase.database()
-        if not db.isOpen():
-            # Try to open connection if not already open
-            db_path = None
-            if self.parent() is not None and hasattr(self.parent(), "db_path"):
-                db_path = self.parent().db_path
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "get_substance_rf_from_db"):
+            result = parent.get_substance_rf_from_db(substance_name)
+        else:
+            import os
+            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            db_path = os.path.join(base_path, "tlcid_database.db")
+            result = ReferenceRepository(db_path).get_substance_rf(substance_name)
 
-            if db_path is None:
-                import os
-                base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                db_path = os.path.join(base_path, "Mytabolites.db")
-
-            db = QSqlDatabase.addDatabase("QSQLITE")
-            db.setDatabaseName(db_path)
-            if not db.open():
-                return None
-
-        # Query the database for Rf values
-        query = QSqlQuery(db)
-        query.prepare("SELECT A, Bprime, C FROM Substances WHERE name = :name")
-        query.bindValue(":name", substance_name)
-
-        if query.exec() and query.next():
-            rf_a = self.parse_rf(query.value(0))
-            rf_b = self.parse_rf(query.value(1))
-            rf_c = self.parse_rf(query.value(2))
-
-            result = [rf_a, rf_b, rf_c]
+        if result is not None:
             self.db_rf_values[substance_name] = result
-            return result
-
-        return None
+        return result
 
 
     def format_rf_value(self, value):
