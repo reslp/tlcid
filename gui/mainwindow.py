@@ -88,6 +88,7 @@ def _make_custom_line_pen(orientation, width):
 class SquareLabel(QLabel):
     linesMoved = pyqtSignal(float, float) # Signal emitting (start_y, front_y)
     spotsChanged = pyqtSignal(list) # Signal emitting list of spots data
+    spotSelectionRequested = pyqtSignal(object)  # Emits a sample ID or None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -329,6 +330,10 @@ class SquareLabel(QLabel):
                         closest_dist = dist
                         clicked_idx = i
 
+            if event.button() == Qt.MouseButton.LeftButton:
+                selected_sid = self.spots[clicked_idx]['sample_id'] if clicked_idx is not None else None
+                self.spotSelectionRequested.emit(selected_sid)
+
             if clicked_idx is not None:
                 self.dragged_spot_index = clicked_idx
             else:
@@ -456,7 +461,7 @@ class SquareLabel(QLabel):
             sid = spot['sample_id']
             color = self.global_colors.get(sid, QColor("white"))
 
-            # Check if this sample is highlighted (characteristics window is open)
+            # Check whether this sample is highlighted.
             is_highlighted = sid in self.highlighted_samples
 
             # Draw highlighted spots with a thicker border and different style
@@ -1013,6 +1018,7 @@ class MainWindow(QMainWindow):
         self.family_to_substances = {}
         self.next_sample_id = 1
         self.active_regular_marking_sid = None
+        self.manual_selected_sid = None
         self.colors = [
             QColor("cyan"), QColor("magenta"), QColor("yellow"),
             QColor("blue"), QColor("orange"), QColor("purple"),
@@ -1198,6 +1204,7 @@ class MainWindow(QMainWindow):
             slot = ImageSlot(label, plate_idx)
             # Connect spot changes to aggregation logic
             slot.image_label.spotsChanged.connect(self.update_results_display)
+            slot.image_label.spotSelectionRequested.connect(self.on_spot_selection_requested)
             # Also connect line moves to aggregation logic
             slot.image_label.linesMoved.connect(lambda s, f: self.update_results_display())
             # Connect per-plate range changes
@@ -1770,20 +1777,36 @@ class MainWindow(QMainWindow):
         """Called when a characteristics window is closed."""
         self.update_highlighting()  # Update highlighting when window closes
 
+    def on_spot_selection_requested(self, sid):
+        """Select a marked spot across all plates and in the results table."""
+        if sid is not None and sid not in self.samples:
+            sid = None
+        self.manual_selected_sid = sid
+        self.update_highlighting()
+
+        if sid is None:
+            self.results_table.clearSelection()
+            self.results_table.setCurrentItem(None)
+            return
+
+        self._restore_manual_table_selection()
+
     def update_highlighting(self):
-        """Update the highlighting state for all spots based on open characteristics windows."""
+        """Update spot highlighting from manual selection and open characteristics windows."""
         # Collect all open window SIDs
-        open_sids = set()
+        highlighted_sids = set()
         for sid, win in self.char_windows.items():
             print(f"DEBUG: {sid}, {win}")
             print(f"DEBUG: {win.isVisible()}")
             if win and win.isVisible():
-                open_sids.add(sid)
-        print(f"DEBUG: OPEN_SIDS:{open_sids}")
+                highlighted_sids.add(sid)
+        if self.manual_selected_sid is not None:
+            highlighted_sids.add(self.manual_selected_sid)
+        print(f"DEBUG: OPEN_SIDS:{highlighted_sids}")
 
         # Update each slot's highlighted samples
         for slot in self.slots:
-            slot.image_label.set_highlighted_samples(open_sids)
+            slot.image_label.set_highlighted_samples(highlighted_sids)
 
     def set_sample_filter(self, sid, group_name, genus, family, is_vis, is_uvs, is_uvl, aft_vis, aft_uv, assigned_name, show_on_plate, font_size, spot_color):
         if sid in self.samples:
@@ -2134,6 +2157,19 @@ class MainWindow(QMainWindow):
             if item and item.data(Qt.ItemDataRole.UserRole) == sid:
                 return row
         return None
+
+    def _restore_manual_table_selection(self):
+        if self.manual_selected_sid is None:
+            return
+
+        row = self._find_row_by_sid(self.manual_selected_sid)
+        if row is None:
+            return
+
+        item = self.results_table.item(row, self.RESULTS_COL_SUBSTANCE)
+        if item is not None:
+            self.results_table.setCurrentItem(item)
+            self.results_table.scrollToItem(item)
 
     def export_combined_image(self):
         """Export a combined image of all loaded plates with markings."""
@@ -2579,6 +2615,11 @@ class MainWindow(QMainWindow):
 
     def update_results_display(self):
         aggregated = self._aggregate_spots()
+        if self.manual_selected_sid is not None and (
+            self.manual_selected_sid not in aggregated
+            or self.manual_selected_sid not in self.samples
+        ):
+            self.manual_selected_sid = None
         self._sync_samples_with_aggregated_spots(aggregated)
         self._auto_stop_completed_marking(aggregated)
         self._ensure_predefined_reference_state(aggregated)
@@ -2589,6 +2630,8 @@ class MainWindow(QMainWindow):
         self._render_result_rows(aggregated, active_standards)
         self._update_plate_name_and_font_maps()
         self._update_reference_button_colors(aggregated)
+        self.update_highlighting()
+        self._restore_manual_table_selection()
 
     def _update_reference_button_colors(self, aggregated):
         """Update the text color of reference substance buttons when marked on all three plates."""
@@ -2647,6 +2690,7 @@ class MainWindow(QMainWindow):
 
         try:
             data = AnalysisSerializer.load_from_path(file_name)
+            self.manual_selected_sid = None
             self.analysis_file_path = file_name
             AnalysisSerializer.apply_to_window(self, data)
         except Exception as e:
@@ -2735,6 +2779,7 @@ class MainWindow(QMainWindow):
         self.samples = {}
         self.next_sample_id = 1
         self.active_regular_marking_sid = None
+        self.manual_selected_sid = None
         self.analysis_file_path = None
 
         # Reset per-plate ranges to default
