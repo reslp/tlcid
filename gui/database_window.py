@@ -1,7 +1,21 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableView, QMessageBox, QHeaderView, QLineEdit, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableView, QMessageBox, QHeaderView, QLineEdit, QLabel, QHBoxLayout
 from PyQt6.QtSql import QSqlDatabase, QSqlTableModel, QSqlQueryModel
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 import os
+
+
+class SubstanceTableModel(QSqlTableModel):
+    """Style substance names like the links in the prediction results."""
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if index.isValid() and index.column() == self.fieldIndex("name"):
+            if role == Qt.ItemDataRole.ForegroundRole:
+                return QColor(0, 102, 204)
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return "Click to open substance details"
+        return super().data(index, role)
+
 
 class DatabaseTableWindow(QWidget):
     def __init__(self, table_name, db_path="Mytabolites.db"):
@@ -81,7 +95,8 @@ class DatabaseTableWindow(QWidget):
             return
 
     def setup_ui(self):
-        self.model = QSqlTableModel(self, self.db)
+        model_class = SubstanceTableModel if self.table_name == "Substances" else QSqlTableModel
+        self.model = model_class(self, self.db)
         self.model.setTable(self.table_name)
         self.model.select()
         
@@ -103,10 +118,55 @@ class DatabaseTableWindow(QWidget):
         # Custom column order/width for Substances table
         if self.table_name == "Substances":
             self._configure_substances_columns()
-        elif self.table_name == "Lichens":
-            self._configure_lichens_view()
-        
-        self.layout.addWidget(self.view)
+            self.view.clicked.connect(self.on_table_cell_clicked)
+
+            content_layout = QHBoxLayout()
+            content_layout.addWidget(self.view, stretch=3)
+
+            self.detail_panel = QWidget()
+            self.detail_panel_layout = QVBoxLayout(self.detail_panel)
+            self.detail_panel_layout.setContentsMargins(0, 0, 0, 0)
+            self.detail_panel.setMinimumWidth(300)
+            self.detail_panel.hide()
+            content_layout.addWidget(self.detail_panel, stretch=4)
+
+            self.layout.addLayout(content_layout)
+        else:
+            if self.table_name == "Lichens":
+                self._configure_lichens_view()
+            self.layout.addWidget(self.view)
+
+    def on_table_cell_clicked(self, index):
+        """Show substance detail when clicking a substance name cell."""
+        if self.table_name != "Substances":
+            return
+
+        name_idx = self.model.fieldIndex("name")
+        if name_idx == -1 or index.column() != name_idx:
+            return
+
+        name = self.model.data(self.model.index(index.row(), name_idx))
+        if not name:
+            return
+
+        from gui.substance_detail_window import SubstanceDetailWindow
+
+        while self.detail_panel_layout.count():
+            child = self.detail_panel_layout.takeAt(0)
+            widget = child.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        detail = SubstanceDetailWindow(str(name), self.db)
+        detail.setWindowFlags(Qt.WindowType.Widget)
+        detail.setParent(self.detail_panel)
+        detail.setWindowTitle(f"Substance Details: {name}")
+        self.detail_panel_layout.addWidget(detail)
+        detail.show()
+
+        if not self.detail_panel.isVisible():
+            self.detail_panel.show()
+            self.resize(max(self.width(), 1150), self.height())
 
     def _configure_substances_columns(self):
         """Set preferred display order for Substances and shrink name column."""
