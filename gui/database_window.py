@@ -236,9 +236,10 @@ class DatabaseTableWindow(QWidget):
           avoid repeating the same source tag.
         - ``Genus``, ``Family``, and ``FamilyReference`` (when present) are
           constant per species and are retrieved with MIN().
-        - When *filter_text* is given the result is filtered via a HAVING
-          clause that checks the Lichen name, the aggregated Substance string,
-          and (if available) Genus / Family.
+        - When *filter_text* is given an outer WHERE clause searches the
+          displayed aggregate columns, not an arbitrary underlying row.
+        - Semicolons separate substances so commas in chemical names remain
+          distinguishable from list separators.
         - ``sort_column`` / ``sort_order`` are used to rebuild the query when
           the user clicks a table header, because the aggregated lichens view
           uses ``QSqlQueryModel`` rather than ``QSqlTableModel``.
@@ -247,7 +248,7 @@ class DatabaseTableWindow(QWidget):
 
         select_parts = [
             "Lichen",
-            "GROUP_CONCAT(Substance, ', ') AS Substance",
+            "GROUP_CONCAT(Substance, '; ') AS Substance",
         ]
         # Stable per-species columns – use MIN() to satisfy GROUP BY
         for col in ("Genus", "Family", "FamilyReference"):
@@ -259,19 +260,20 @@ class DatabaseTableWindow(QWidget):
                 "GROUP_CONCAT(DISTINCT SubstancesReference) AS SubstancesReference"
             )
 
-        q = f"SELECT {', '.join(select_parts)} FROM Lichens GROUP BY Lichen"
+        grouped = f"SELECT {', '.join(select_parts)} FROM Lichens GROUP BY Lichen"
+        q = f"SELECT * FROM ({grouped}) AS lichen_summary"
 
         if filter_text:
             safe = filter_text.replace("'", "''")
-            having_parts = [
+            filter_parts = [
                 f"Lichen LIKE '%{safe}%'",
                 f"Substance LIKE '%{safe}%'",
             ]
             if "Genus" in available:
-                having_parts.append(f"Genus LIKE '%{safe}%'")
+                filter_parts.append(f"Genus LIKE '%{safe}%'")
             if "Family" in available:
-                having_parts.append(f"Family LIKE '%{safe}%'")
-            q += " HAVING " + " OR ".join(having_parts)
+                filter_parts.append(f"Family LIKE '%{safe}%'")
+            q += " WHERE " + " OR ".join(filter_parts)
 
         projected = getattr(self, "_lichens_projected", ["Lichen", "Substance"])
         sort_column = sort_column or self._lichens_sort_column
