@@ -913,7 +913,7 @@ class ImageSlot(QWidget):
         painter.setPen(pen)
         painter.drawLine(0, front_y, img_w, front_y)
 
-        if self.image_label.show_support_lines:
+        if self.image_label.show_support_lines or self.image_label.support_line_specs_provider is not None:
             support_color = QColor("gray")
             painter.setPen(QPen(support_color, max(1, int(2 * scale_factor))))
             font = painter.font()
@@ -2690,11 +2690,21 @@ class MainWindow(QMainWindow):
 
         try:
             data = AnalysisSerializer.load_from_path(file_name)
-            self.manual_selected_sid = None
-            self.analysis_file_path = file_name
-            AnalysisSerializer.apply_to_window(self, data)
+            missing_images = AnalysisSerializer.apply_to_window(self, data)
         except Exception as e:
             print(f"Error loading file: {e}")
+            QMessageBox.warning(self, "Load Error", f"Could not load analysis:\n{e}")
+            return
+
+        self.analysis_file_path = file_name
+        if missing_images:
+            QMessageBox.warning(
+                self,
+                "Images unavailable",
+                "The analysis was loaded, but these images are missing or unreadable:\n\n"
+                + "\n".join(missing_images)
+                + "\n\nTheir saved annotations were preserved; unavailable images cannot be exported.",
+            )
 
     def _has_analysis_data(self):
         """Return True if plates are loaded and/or spots/substances exist."""
