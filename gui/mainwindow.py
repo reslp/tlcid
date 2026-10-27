@@ -21,6 +21,7 @@ from gui.prediction_service import PredictionService
 from gui.reference_repository import ReferenceRepository
 from gui.report_generator import PDFReportGenerator
 from gui.results_table_renderer import ResultsTableRenderer
+from gui.substance_note_window import SubstanceNoteWindow
 from gui.reference_standards import (
     REFERENCE_STANDARDS,
     get_reference_standard,
@@ -995,7 +996,8 @@ class MainWindow(QMainWindow):
     RESULTS_COL_PLATE_B = 4
     RESULTS_COL_PLATE_C = 5
     RESULTS_COL_PREDICTIONS = 6
-    RESULTS_COL_ALL_RESULTS = 7
+    RESULTS_COL_NOTE = 7
+    RESULTS_COL_ALL_RESULTS = 8
 
     def __init__(self, parent=None, debug_mode=False):
         super().__init__(parent)
@@ -1217,8 +1219,8 @@ class MainWindow(QMainWindow):
         # Results Display
         # Results Display using QTableWidget
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(8)
-        self.results_table.setHorizontalHeaderLabels(["Color", "Reference", "Substance", "Plate A", "Plate B'", "Plate C", "Predictions", "All Results"])
+        self.results_table.setColumnCount(9)
+        self.results_table.setHorizontalHeaderLabels(["Color", "Reference", "Substance", "Plate A", "Plate B'", "Plate C", "Predictions", "Note", "All Results"])
 
         # Column Resizing Logic
         header = self.results_table.horizontalHeader()
@@ -1243,7 +1245,11 @@ class MainWindow(QMainWindow):
         # 6: Predictions (Fill remaining space)
         header.setSectionResizeMode(self.RESULTS_COL_PREDICTIONS, QHeaderView.ResizeMode.Stretch)
 
-        # 7: All Results button (Fixed, Small)
+        # 7: Spot note (Fixed, Small)
+        header.setSectionResizeMode(self.RESULTS_COL_NOTE, QHeaderView.ResizeMode.Fixed)
+        self.results_table.setColumnWidth(self.RESULTS_COL_NOTE, 50)
+
+        # 8: All Results button (Fixed, Small)
         header.setSectionResizeMode(self.RESULTS_COL_ALL_RESULTS, QHeaderView.ResizeMode.Fixed)
         self.results_table.setColumnWidth(self.RESULTS_COL_ALL_RESULTS, 90)
 
@@ -1723,6 +1729,20 @@ class MainWindow(QMainWindow):
             self._prediction_hover_link_by_sid.pop(sid, None)
 
         self.update_results_display()
+
+    def edit_sample_note(self, sid):
+        sample = self.samples.get(sid)
+        if sample is None:
+            return
+        name = sample.get('assigned_name') or sample['name']
+        dialog = SubstanceNoteWindow(name, sample.get('note', ''), self)
+        dialog.exec()
+        if self.samples.get(sid) is sample:
+            sample['note'] = dialog.textbox.toPlainText()
+            row = self._find_row_by_sid(sid)
+            if row is not None:
+                self.results_renderer._render_note_cell(row, sid)
+        dialog.deleteLater()
 
     def open_characteristics_window(self, sid):
         if sid not in self.samples:

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from math import ceil
 
-from PyQt6.QtCore import QMarginsF, QRect, QSizeF, Qt
-from PyQt6.QtGui import QColor, QFont, QPainter, QPageLayout, QPageSize, QPdfWriter
+from PyQt6.QtCore import QMarginsF, QPointF, QRect, QSizeF, Qt
+from PyQt6.QtGui import QColor, QFont, QPainter, QPageLayout, QPageSize, QPdfWriter, QTextLayout, QTextOption
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 
@@ -23,15 +24,15 @@ class PDFReportGenerator:
             )
             return
 
-        has_pred_rows = any(
-            sid > 0 and self.window.samples.get(sid, {}).get("last_matches")
-            for sid in self.window.samples
+        has_report_rows = any(
+            (sid > 0 and sample.get("last_matches")) or sample.get("note", "").strip()
+            for sid, sample in self.window.samples.items()
         )
-        if not has_pred_rows:
+        if not has_report_rows:
             QMessageBox.warning(
                 self.window,
-                "No Predictions",
-                "No predicted substances available. Please mark spots first.",
+                "No Predictions or Notes",
+                "No predicted substances or spot notes available. Please mark spots first.",
             )
             return
 
@@ -237,13 +238,41 @@ class PDFReportGenerator:
         table_x = left
         table_w = width - 1500 # important: modify width so that it fits on the page with a margin
 
-        for sid in sorted(self.window.samples.keys()):
-            if sid <= 0:
-                continue
+        def draw_note(note: str) -> None:
+            nonlocal y
+            if not note.strip():
+                return
+            note_h = line_height(normal_font)
+            ensure_space(note_h * 2)
+            painter.setFont(normal_font)
+            painter.setPen(QColor("black"))
+            painter.drawText(table_x, y + note_h, "Note:")
+            y += note_h + 4
+            option = QTextOption()
+            option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+            for paragraph in note.split('\n'):
+                layout = QTextLayout(paragraph or ' ', normal_font, painter.device())
+                layout.setTextOption(option)
+                layout.beginLayout()
+                lines = []
+                while True:
+                    line = layout.createLine()
+                    if not line.isValid():
+                        break
+                    line.setLineWidth(max(1, table_w))
+                    lines.append(line)
+                layout.endLayout()
+                for line in lines:
+                    height = ceil(line.height())
+                    ensure_space(height)
+                    line.draw(painter, QPointF(table_x, y))
+                    y += height
 
+        for sid in sorted(self.window.samples.keys()):
             sdata = self.window.samples[sid]
-            matches = sdata.get("last_matches", [])[:5]
-            if not matches:
+            note = sdata.get("note", "")
+            matches = sdata.get("last_matches", [])[:5] if sid > 0 else []
+            if not matches and not note.strip():
                 continue
 
             spot_name = sdata.get("assigned_name") or sdata.get("name", f"Substance {sid}")
@@ -318,5 +347,8 @@ class PDFReportGenerator:
                 table_header_h + (1 + len(matches)) * row_h,
             )
             y += block_gap
+            draw_note(note)
+            if note.strip():
+                y += block_gap
 
         painter.end()

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import html
+from pathlib import Path
 from urllib.parse import quote
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtWidgets import QLabel, QPushButton, QCheckBox, QHBoxLayout, QWidget, QTableWidgetItem
 
 from gui.calibration import calibrate_spot
@@ -70,6 +71,7 @@ class ResultsTableRenderer:
             matches, current_filter, current_genus, current_family = self._predict_matches(sid, prediction_input)
             self._render_prediction_cell(current_row, sid, matches, current_filter, current_genus, current_family)
             self._render_reference_cell(current_row, sid, aggregated)
+            self._render_note_cell(current_row, sid)
             self._render_all_results_cell(current_row, sid, matches, prediction_input)
 
         table.setSortingEnabled(True)
@@ -304,6 +306,21 @@ class ResultsTableRenderer:
         ref_sort_item.setData(Qt.ItemDataRole.UserRole, 2)
         ref_sort_item.setFlags(Qt.ItemFlag.NoItemFlags)
         self.table.setItem(row, self.window.RESULTS_COL_REFERENCE, ref_sort_item)
+
+    def _render_note_cell(self, row, sid):
+        note = self.window.samples[sid].get('note', '')
+        has_note = bool(note.strip())
+        button = QPushButton()
+        icon_name = 'note_filled.svg' if has_note else 'note.svg'
+        button.setIcon(QIcon(str(Path(__file__).resolve().parent / 'icons' / icon_name)))
+        button.setIconSize(QSize(20, 20))
+        button.setToolTip(f"Edit note:\n{note}" if has_note else "Add note")
+        button.setAccessibleName("Edit note" if has_note else "Add note")
+        button.setProperty('has_note', has_note)
+        button.setProperty('sid', sid)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.clicked.connect(lambda checked, sid=sid: self.window.edit_sample_note(sid))
+        self.table.setCellWidget(row, self.window.RESULTS_COL_NOTE, button)
 
     def _render_all_results_cell(self, row, sid, matches, prediction_input):
         if sid > 0 and matches:
