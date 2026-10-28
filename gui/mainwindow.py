@@ -2,12 +2,13 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QLabel, QPushButton, QFileDialog, QSizePolicy,
                              QTableWidget, QHeaderView, QColorDialog,
                              QMessageBox, QDoubleSpinBox, QDialog, QMenu, QToolButton,
-                             QSplitter)
+                             QSplitter, QFrame)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QCloseEvent, QIcon
 from urllib.parse import unquote
 from pathlib import Path
+from copy import deepcopy
 
 from gui.analysis_io import AnalysisSerializer
 from gui.calibration import (
@@ -86,6 +87,15 @@ def _make_custom_line_pen(orientation, width):
     return pen
 
 
+def _draw_reference_center(painter, px, py, radius, color):
+    inner_radius = max(1, radius // 2)
+    painter.save()
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawEllipse(px - inner_radius, py - inner_radius, inner_radius * 2, inner_radius * 2)
+    painter.restore()
+
+
 class SquareLabel(QLabel):
     linesMoved = pyqtSignal(float, float) # Signal emitting (start_y, front_y)
     spotsChanged = pyqtSignal(list) # Signal emitting list of spots data
@@ -119,6 +129,7 @@ class SquareLabel(QLabel):
         self.global_names = {}
         self.global_font_sizes = {}  # Map: sample_id -> font_size for on-plate labels
         self.highlighted_samples = set()  # Set of sample IDs that should be highlighted
+        self.distinct_reference_ids = set()
 
         # Line Dragging State
         self.dragged_line = None # "Start" or "Front"
@@ -483,6 +494,8 @@ class SquareLabel(QLabel):
             py = int(spot['y'] * self.height())
             painter.drawEllipse(px - self.spot_radius, py - self.spot_radius,
                                 self.spot_radius * 2, self.spot_radius * 2)
+            if sid in self.distinct_reference_ids:
+                _draw_reference_center(painter, px, py, self.spot_radius, color)
 
             name = self.global_names.get(sid)
             if name:
@@ -960,6 +973,8 @@ class ImageSlot(QWidget):
             py = widget_norm_to_image_px(spot['y'], is_y=True)
 
             painter.drawEllipse(px - spot_radius, py - spot_radius, spot_radius * 2, spot_radius * 2)
+            if sid in self.image_label.distinct_reference_ids:
+                _draw_reference_center(painter, px, py, spot_radius, color)
 
             name = self.image_label.global_names.get(sid)
             if name:
@@ -1018,6 +1033,8 @@ class MainWindow(QMainWindow):
         self.reference_rf_by_name = {}
         self.genus_to_substances = {} # Compatibility cache for genus-specific substance filtering
         self.family_to_substances = {}
+        self.global_genus_filter = None
+        self.global_family_filter = None
         self.next_sample_id = 1
         self.active_regular_marking_sid = None
         self.manual_selected_sid = None
@@ -1049,6 +1066,7 @@ class MainWindow(QMainWindow):
         self.allow_missing_rf_values = False
         self.display_support_lines = False
         self.display_rf_classes = False
+        self.distinct_reference_sequences = False
         self._rf_classes_missing_popup_shown = False
 
         # Per-plate range settings: {plate_index: range_value}
@@ -1070,7 +1088,7 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout()
         main_widget.setLayout(main_layout)
 
-        # Toolbar Area - Main horizontal layout with two columns
+        # Toolbar: marking controls, compact settings summary, and logo
         toolbar_hlayout = QHBoxLayout()
 
         # Left column: toolbar controls in three rows
@@ -1153,7 +1171,25 @@ class MainWindow(QMainWindow):
         toolbar_left_col.addLayout(row5_layout)
 
         # Add left column to main toolbar layout
-        toolbar_hlayout.addLayout(toolbar_left_col)
+        toolbar_hlayout.addLayout(toolbar_left_col, 1)
+
+        self.general_settings_panel = QFrame()
+        self.general_settings_panel.setFrameShape(QFrame.Shape.StyledPanel)
+        self.general_settings_panel.setFixedSize(250, 100)
+        summary_layout = QVBoxLayout(self.general_settings_panel)
+        summary_layout.setContentsMargins(8, 5, 8, 5)
+        summary_layout.setSpacing(0)
+        self.general_settings_labels = {}
+        for key in ('calibration', 'support_lines', 'rf_classes', 'genus', 'family'):
+            label = QLabel()
+            font = label.font()
+            font.setPointSize(10)
+            label.setFont(font)
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            self.general_settings_labels[key] = label
+            summary_layout.addWidget(label)
+        toolbar_hlayout.addWidget(self.general_settings_panel, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # Right column: App icon with TLCid text below (spans all three rows)
         import os
@@ -1178,6 +1214,17 @@ class MainWindow(QMainWindow):
             self.tlcid_label.setText("TLCid")
             self.tlcid_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             icon_column.addWidget(self.tlcid_label)
+
+            try:
+                version = (Path(self.base_path) / 'VERSION').read_text(encoding='utf-8').strip()
+            except OSError:
+                version = ''
+            self.version_label = QLabel(f'v{version}' if version else 'Version unknown')
+            version_font = self.version_label.font()
+            version_font.setPointSize(9)
+            self.version_label.setFont(version_font)
+            self.version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            icon_column.addWidget(self.version_label)
 
             icon_column.addStretch()  # Push content to top
             toolbar_hlayout.addLayout(icon_column)
@@ -1276,6 +1323,8 @@ class MainWindow(QMainWindow):
         main_layout.setStretch(1, 1)
 
         self.create_menu()
+        self._update_general_settings_summary()
+        self._remember_saved_analysis()
         QTimer.singleShot(0, self.initialize_main_splitter_sizes)
 
     def initialize_main_splitter_sizes(self):
@@ -1470,6 +1519,16 @@ class MainWindow(QMainWindow):
         load_examples_action.triggered.connect(self.load_examples)
         file_menu.addAction(load_examples_action)
 
+        settings_action = QAction("Settings", self)
+        settings_action.setMenuRole(QAction.MenuRole.NoRole)
+        settings_action.triggered.connect(self.show_settings_window)
+        file_menu.addAction(settings_action)
+
+        file_menu.addSeparator()
+        close_action = QAction("Close", self)
+        close_action.setMenuRole(QAction.MenuRole.NoRole)
+        close_action.triggered.connect(self.close)
+        file_menu.addAction(close_action)
 
         # Analysis Menu
         analysis_menu = menu_bar.addMenu("Analysis")
@@ -1485,13 +1544,6 @@ class MainWindow(QMainWindow):
         generate_report_action = QAction("Generate Report", self)
         generate_report_action.triggered.connect(self.generate_report)
         analysis_menu.addAction(generate_report_action)
-
-        # Settings Menu
-        settings_menu = menu_bar.addMenu("Settings")
-        application_settings_action = QAction("Application Settings", self)
-        application_settings_action.setMenuRole(QAction.MenuRole.NoRole)
-        application_settings_action.triggered.connect(self.show_settings_window)
-        settings_menu.addAction(application_settings_action)
 
         # Reference Menu
         ref_menu = menu_bar.addMenu("Databases")
@@ -2021,6 +2073,9 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'settings_window') or self.settings_window is None:
             self.settings_window = SettingsWindow()
             self.settings_window.settingsChanged.connect(self.update_detection_settings)
+            self.settings_window.appearanceChanged.connect(self.set_distinct_reference_sequences)
+            self.settings_window.genusFilterChanged.connect(self.set_global_genus_filter)
+            self.settings_window.familyFilterChanged.connect(self.set_global_family_filter)
 
         self.settings_window.set_current_settings(
             self.detection_method,
@@ -2030,6 +2085,9 @@ class MainWindow(QMainWindow):
             self.display_rf_classes,
             self.display_support_lines,
         )
+        self.settings_window.set_current_appearance(self.distinct_reference_sequences)
+        self.settings_window.set_genus_options(self.genus_to_substances, self.global_genus_filter)
+        self.settings_window.set_family_options(self.family_to_substances, self.global_family_filter)
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
@@ -2244,6 +2302,33 @@ class MainWindow(QMainWindow):
 
         self.update_results_display()
 
+    def set_global_genus_filter(self, genus):
+        self.global_genus_filter = genus or None
+        if getattr(self, 'settings_window', None) is not None:
+            self.settings_window.set_genus_options(self.genus_to_substances, self.global_genus_filter)
+        self.update_results_display()
+
+    def set_global_family_filter(self, family):
+        self.global_family_filter = family or None
+        if getattr(self, 'settings_window', None) is not None:
+            self.settings_window.set_family_options(self.family_to_substances, self.global_family_filter)
+        self.update_results_display()
+
+    def set_distinct_reference_sequences(self, checked):
+        self.distinct_reference_sequences = checked
+        if getattr(self, 'settings_window', None) is not None:
+            self.settings_window.set_current_appearance(checked)
+        self._update_reference_spot_appearance()
+
+    def _update_reference_spot_appearance(self):
+        reference_ids = {
+            sid for sid, sample in self.samples.items()
+            if self.distinct_reference_sequences and sample.get('is_reference', False)
+        }
+        for slot in self.slots:
+            slot.image_label.distinct_reference_ids = reference_ids
+            slot.image_label.update()
+
     def set_display_support_lines(self, checked):
         """Apply the application-level support-lines switch to all plates."""
         self.display_support_lines = checked
@@ -2309,11 +2394,39 @@ class MainWindow(QMainWindow):
         self.plate_calibration_modes[plate_idx] = normalized_mode
         if 0 <= plate_idx < len(self.slots):
             self.slots[plate_idx].set_calibration_mode(normalized_mode)
+        self._update_general_settings_summary()
         if update_results:
             self.update_results_display()
 
     def on_plate_calibration_mode_changed(self, plate_idx, mode):
         self.set_plate_calibration_mode(plate_idx, mode, update_results=True)
+
+    def _update_general_settings_summary(self):
+        if not hasattr(self, 'general_settings_labels'):
+            return
+        modes = [self.get_plate_calibration_mode(i) for i in range(len(self.plate_labels))]
+        if len(set(modes)) == 1:
+            calibration = modes[0]
+        else:
+            groups = []
+            for mode, short in ((CALIBRATION_MODE_LINEAR, 'Linear'), (CALIBRATION_MODE_NEAREST, 'Nearest')):
+                plates = [plate for plate, current in zip(self.plate_labels, modes) if current == mode]
+                groups.append(f"{'/'.join(plates)} {short}")
+            calibration = '; '.join(groups)
+        lines = {
+            'calibration': f"Calibration: {calibration}",
+            'support_lines': f"Global support lines: {'On' if self.display_support_lines else 'Off'}",
+            'rf_classes': f"Global Rf classes: {'On' if self.display_rf_classes else 'Off'}",
+            'genus': f"Global genus: {self.global_genus_filter or 'All genera'}",
+            'family': f"Global family: {self.global_family_filter or 'All families'}",
+        }
+        for key, text in lines.items():
+            label = self.general_settings_labels[key]
+            label.setText(label.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, 230))
+            label.setToolTip(text)
+        self.general_settings_labels['calibration'].setToolTip('Calibration: ' + '; '.join(
+            f'{plate}: {mode}' for plate, mode in zip(self.plate_labels, modes)
+        ))
 
     def update_detection_status_label(self):
         # Keep the legacy helper as the central place for synchronizing
@@ -2324,6 +2437,7 @@ class MainWindow(QMainWindow):
             self.range_main.blockSignals(True)
             self.range_main.setValue(self.detection_range)
             self.range_main.blockSignals(False)
+        self._update_general_settings_summary()
 
     def deactivate_marking_mode(self):
         self.active_regular_marking_sid = None
@@ -2634,6 +2748,7 @@ class MainWindow(QMainWindow):
         self.results_renderer.render(aggregated, active_standards)
 
     def update_results_display(self):
+        self._update_general_settings_summary()
         aggregated = self._aggregate_spots()
         if self.manual_selected_sid is not None and (
             self.manual_selected_sid not in aggregated
@@ -2643,6 +2758,7 @@ class MainWindow(QMainWindow):
         self._sync_samples_with_aggregated_spots(aggregated)
         self._auto_stop_completed_marking(aggregated)
         self._ensure_predefined_reference_state(aggregated)
+        self._update_reference_spot_appearance()
         active_standards = self._build_active_standards(aggregated)
         rf_class_refs = self._build_rf_class_reference_positions()
         self._apply_support_line_mapping(active_standards, rf_class_refs)
@@ -2685,16 +2801,20 @@ class MainWindow(QMainWindow):
                         self.slots[i].set_loaded_image(pixmap, full_path)
 
     def save_analysis(self):
-        suggested_path = self.analysis_file_path or ""
+        suggested_path = str(Path(self.analysis_file_path).with_suffix('.tlcid')) if self.analysis_file_path else ""
         file_name, _ = QFileDialog.getSaveFileName(
-            self, "Save Analysis", suggested_path, "JSON Files (*.json)"
+            self, "Save Analysis", suggested_path, "TLCid Analysis (*.tlcid)"
         )
         if not file_name:
             return False
+        if not file_name.lower().endswith('.tlcid'):
+            file_name += '.tlcid'
 
         try:
-            AnalysisSerializer.save_to_path(file_name, AnalysisSerializer.from_window_state(self))
+            images = {i: slot.image_label._original_pixmap for i, slot in enumerate(self.slots)}
+            AnalysisSerializer.save_to_path(file_name, AnalysisSerializer.from_window_state(self), images)
             self.analysis_file_path = file_name
+            self._remember_saved_analysis()
             return True
         except Exception as e:
             print(f"Error saving file: {e}")
@@ -2703,7 +2823,7 @@ class MainWindow(QMainWindow):
 
     def load_analysis(self):
         file_name, _ = QFileDialog.getOpenFileName(
-            self, "Load Analysis", "", "JSON Files (*.json)"
+            self, "Load Analysis", "", "TLCid Analyses (*.tlcid *.json)"
         )
         if not file_name:
             return
@@ -2717,6 +2837,7 @@ class MainWindow(QMainWindow):
             return
 
         self.analysis_file_path = file_name
+        self._remember_saved_analysis()
         if missing_images:
             QMessageBox.warning(
                 self,
@@ -2725,6 +2846,12 @@ class MainWindow(QMainWindow):
                 + "\n".join(missing_images)
                 + "\n\nTheir saved annotations were preserved; unavailable images cannot be exported.",
             )
+
+    def _remember_saved_analysis(self):
+        self._saved_analysis_state = deepcopy(AnalysisSerializer.from_window_state(self))
+
+    def _has_unsaved_changes(self):
+        return AnalysisSerializer.from_window_state(self) != self._saved_analysis_state
 
     def _has_analysis_data(self):
         """Return True if plates are loaded and/or spots/substances exist."""
@@ -2783,11 +2910,11 @@ class MainWindow(QMainWindow):
             self.species_window = None
 
     def closeEvent(self, event: QCloseEvent):
-        if self._has_analysis_data():
+        if self._has_unsaved_changes():
             choice = QMessageBox.question(
                 self,
                 "Save Analysis?",
-                "Current analysis has loaded plates and/or marked substances. Save before closing?",
+                "Current analysis has unsaved changes. Save before closing?",
                 QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Save,
             )
@@ -2890,6 +3017,7 @@ class MainWindow(QMainWindow):
             slot.image_label.update()
 
         self.update_results_display()
+        self._remember_saved_analysis()
 
     def load_reference_data(self):
         bundle = self.reference_repository.load_reference_data()
@@ -2898,6 +3026,13 @@ class MainWindow(QMainWindow):
         self.genus_to_substances = self.prediction_service.genus_to_substances
         self.family_to_substances = self.prediction_service.family_to_substances
         self.reference_rf_by_name = self.prediction_service.reference_rf_by_name
+        if self.global_genus_filter not in self.genus_to_substances:
+            self.global_genus_filter = None
+        if self.global_family_filter not in self.family_to_substances:
+            self.global_family_filter = None
+        if getattr(self, 'settings_window', None) is not None:
+            self.settings_window.set_genus_options(self.genus_to_substances, self.global_genus_filter)
+            self.settings_window.set_family_options(self.family_to_substances, self.global_family_filter)
 
     def predict_matches(self, input_data, filter_group=None, filter_genus=None, filter_family=None,
                         filter_vis=False, filter_uvs=False, filter_uvl=False,
@@ -2909,7 +3044,7 @@ class MainWindow(QMainWindow):
         self.prediction_service.family_to_substances = self.family_to_substances
         self.prediction_service.reference_rf_by_name = self.reference_rf_by_name
 
-        return self.prediction_service.predict(
+        matches = self.prediction_service.predict(
             input_data,
             detection_method=self.detection_method,
             detection_range=self.detection_range,
@@ -2924,3 +3059,10 @@ class MainWindow(QMainWindow):
             filter_aft_uv=filter_aft_uv,
             allow_missing_rf_values=allow_missing_rf_values,
         )
+        if self.global_genus_filter:
+            valid_substances = self.genus_to_substances.get(self.global_genus_filter, set())
+            matches = [(score, name) for score, name in matches if name.lower() in valid_substances]
+        if self.global_family_filter:
+            valid_substances = self.family_to_substances.get(self.global_family_filter, set())
+            matches = [(score, name) for score, name in matches if name.lower() in valid_substances]
+        return matches

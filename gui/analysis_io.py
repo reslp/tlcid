@@ -3,28 +3,76 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+from copy import deepcopy
 import json
 import math
+import os
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, is_zipfile
 
-from PyQt6.QtCore import QSignalBlocker
+from PyQt6.QtCore import QBuffer, QIODevice, QSignalBlocker
 from PyQt6.QtGui import QColor, QPixmap
 
 from gui.calibration import CALIBRATION_MODE_LINEAR, normalize_calibration_mode
 from gui.reference_standards import get_reference_standard
 
 
+MAX_MANIFEST_BYTES = 10 * 1024 * 1024
+MAX_IMAGE_BYTES = 256 * 1024 * 1024
+
+
 class AnalysisSerializer:
     """Serialize and apply TLCid analysis state."""
 
     @staticmethod
-    def save_to_path(file_name: str, data: dict[str, Any]) -> None:
-        with open(file_name, 'w') as f:
-            json.dump(data, f, indent=4)
+    def save_to_path(file_name: str, data: dict[str, Any], images: dict[int, QPixmap | None] | None = None) -> None:
+        """Atomically save JSON and full-resolution, unannotated images as a ZIP."""
+        source_version = _integer(data.get('version', 1), 'version')
+        document = deepcopy(data)
+        document['version'] = 3
+        destination = Path(file_name)
+        temporary_path = None
+        try:
+            with NamedTemporaryFile(dir=destination.parent, prefix=f'.{destination.name}.', suffix='.tmp', delete=False) as temporary:
+                temporary_path = Path(temporary.name)
+                with ZipFile(temporary, 'w', compression=ZIP_DEFLATED) as archive:
+                    seen = set()
+                    for plate in document['plates']:
+                        idx = _integer(plate.get('id'), 'plate ID')
+                        member = _image_member(idx)
+                        if idx in seen:
+                            raise ValueError(f'Duplicate plate ID: {idx}')
+                        seen.add(idx)
+                        if images is not None:
+                            pixmap = images.get(idx)
+                        else:
+                            pixmap = _plate_pixmap(plate, source_version)
+                        plate.pop('_image_data', None)
+                        if pixmap is not None and not pixmap.isNull():
+                            archive.writestr(member, _encode_pixmap(pixmap), compress_type=ZIP_STORED)
+                            plate['image_path'] = member
+                        elif plate.get('image_path'):
+                            raise ValueError(f'Cannot embed the image for plate {idx + 1}: image unavailable. Load it before saving.')
+                        else:
+                            plate['image_path'] = None
+                    manifest = json.dumps(document, indent=4, ensure_ascii=False, allow_nan=False).encode('utf-8')
+                    if len(manifest) > MAX_MANIFEST_BYTES:
+                        raise ValueError('Analysis metadata is too large.')
+                    archive.writestr('analysis.json', manifest)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.replace(temporary_path, destination)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
     @staticmethod
     def load_from_path(file_name: str) -> dict[str, Any]:
-        with open(file_name, 'r') as f:
+        if is_zipfile(file_name):
+            return _load_archive(file_name)
+        with open(file_name, 'r', encoding='utf-8') as f:
             return json.load(f)
 
     @staticmethod
@@ -33,10 +81,13 @@ class AnalysisSerializer:
             "version": 2,
             "detection_method": window.detection_method,
             "detection_range": window.detection_range,
+            "global_genus_filter": window.global_genus_filter,
+            "global_family_filter": window.global_family_filter,
             "relative_rf_display": window.relative_rf_display,
             "allow_missing_rf_values": window.allow_missing_rf_values,
             "display_support_lines": window.display_support_lines,
             "display_rf_classes": window.display_rf_classes,
+            "distinct_reference_sequences": window.distinct_reference_sequences,
             "plate_ranges": window.plate_ranges,
             "plate_calibration_modes": window.plate_calibration_modes,
             "samples": {},
@@ -110,6 +161,67 @@ class AnalysisSerializer:
         return missing_images
 
 
+def _image_member(idx):
+    if not 0 <= idx < 3:
+        raise ValueError(f'Invalid plate ID: {idx}')
+    return f"images/plate-{'abc'[idx]}.png"
+
+
+def _encode_pixmap(pixmap):
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    if not pixmap.save(buffer, 'PNG'):
+        raise ValueError('Could not encode a plate image.')
+    encoded = bytes(buffer.data())
+    if len(encoded) > MAX_IMAGE_BYTES:
+        raise ValueError('Plate image is too large.')
+    return encoded
+
+
+def _read_member(archive, member, limit):
+    if archive.getinfo(member).file_size > limit:
+        raise ValueError(f'Archive entry is too large: {member}')
+    return archive.read(member)
+
+
+def _load_archive(file_name):
+    with ZipFile(file_name) as archive:
+        names = archive.namelist()
+        if len(names) != len(set(names)):
+            raise ValueError('Analysis archive contains duplicate entries.')
+        data = json.loads(_read_member(archive, 'analysis.json', MAX_MANIFEST_BYTES))
+        _require(data, dict, 'analysis')
+        if _integer(data.get('version'), 'version') != 3:
+            raise ValueError('Unsupported analysis archive version.')
+        for plate in _require(data.get('plates'), list, 'plates'):
+            _require(plate, dict, 'plate')
+            member = plate.get('image_path')
+            plate.pop('_image_data', None)
+            if member is not None:
+                expected = _image_member(_integer(plate.get('id'), 'plate ID'))
+                if member != expected:
+                    raise ValueError(f'Invalid embedded image path: {member}')
+                # Read bytes only; archive entries are never extracted to disk.
+                plate['_image_data'] = _read_member(archive, member, MAX_IMAGE_BYTES)
+        return data
+
+
+def _plate_pixmap(plate, version):
+    path = plate.get('image_path')
+    if not path:
+        return None
+    if version == 3:
+        if path != _image_member(_integer(plate.get('id'), 'plate ID')):
+            raise ValueError(f'Invalid embedded image path: {path}')
+        encoded = _require(plate.get('_image_data'), bytes, 'embedded image')
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(encoded):
+            raise ValueError(f'Embedded image is unreadable: {path}')
+        return pixmap
+    pixmap = QPixmap(path)
+    return None if pixmap.isNull() else pixmap
+
+
 def serialize_qcolor(color) -> str | None:
     if isinstance(color, QColor) and color.isValid():
         return color.name(QColor.NameFormat.HexArgb)
@@ -163,8 +275,16 @@ def _prepare_settings(data, slot_count):
     if method not in ('Range', 'MSE'):
         raise ValueError("Unknown detection method.")
     legacy_mode = normalize_calibration_mode(data.get('calibration_mode', CALIBRATION_MODE_LINEAR))
+    genus = data.get('global_genus_filter')
+    if genus is not None:
+        _require(genus, str, 'global_genus_filter')
+    family = data.get('global_family_filter')
+    if family is not None:
+        _require(family, str, 'global_family_filter')
     settings = {
         'detection_method': method,
+        'global_genus_filter': genus or None,
+        'global_family_filter': family or None,
         'detection_range': _number(data.get('detection_range', 0.05), 'detection_range'),
         'relative_rf_display': _flag(data, 'relative_rf_display', True),
         'allow_missing_rf_values': _flag(data, 'allow_missing_rf_values'),
@@ -172,6 +292,7 @@ def _prepare_settings(data, slot_count):
             _flag(plate, 'show_support_lines') for plate in data['plates']
         )),
         'display_rf_classes': _flag(data, 'display_rf_classes'),
+        'distinct_reference_sequences': _flag(data, 'distinct_reference_sequences'),
         'calibration_mode': legacy_mode,
         'plate_ranges': {i: 0.05 for i in range(slot_count)},
         'plate_calibration_modes': {i: legacy_mode for i in range(slot_count)},
@@ -256,7 +377,7 @@ def _prepare_analysis(window, data):
     if 'samples' not in data or 'plates' not in data:
         raise ValueError('Analysis must contain samples and plates.')
     version = _integer(data.get('version', 1), 'version')
-    if version not in (1, 2):
+    if version not in (1, 2, 3):
         raise ValueError(f'Unsupported analysis version: {version}')
     for plate in _require(data['plates'], list, 'plates'):
         _require(plate, dict, 'plate')
@@ -288,12 +409,11 @@ def _prepare_analysis(window, data):
 
     # Decode images before touching the UI; installation never reads from disk.
     missing_images = []
-    for plate in plates.values():
-        path = plate['image_path']
-        pixmap = QPixmap(path) if path else QPixmap()
-        plate['pixmap'] = None if pixmap.isNull() else pixmap
-        if path and pixmap.isNull():
-            missing_images.append(path)
+    for source in data['plates']:
+        plate = plates[_integer(source['id'], 'plate ID')]
+        plate['pixmap'] = _plate_pixmap(source, version)
+        if plate['image_path'] and plate['pixmap'] is None:
+            missing_images.append(plate['image_path'])
     return settings, samples, plates, missing_images
 
 
@@ -331,7 +451,7 @@ def _empty_label_state():
         'show_start_line_adjust_hint': False,
         'spots': [], 'custom_lines': [],
         'global_colors': {}, 'global_names': {}, 'global_font_sizes': {},
-        'highlighted_samples': set(),
+        'highlighted_samples': set(), 'distinct_reference_ids': set(),
         'support_line_y_mapper': None, 'support_line_specs_provider': None,
         'custom_line_rf_label_provider': None,
         'adding_sample_mode': False, 'current_sample_id': None,
@@ -364,6 +484,8 @@ def _load_controls(window):
             settings, settings.method_combo, settings.range_spin,
             settings.relative_rf_checkbox, settings.allow_missing_rf_checkbox,
             settings.display_support_lines_checkbox, settings.display_rf_classes_checkbox,
+            settings.distinct_reference_sequences_checkbox, settings.global_genus_combo,
+            settings.global_family_combo,
         ])
     return controls
 
@@ -441,6 +563,9 @@ def _refresh_window(window, restoring=False):
             window.detection_method, window.detection_range, window.relative_rf_display,
             window.allow_missing_rf_values, window.display_rf_classes, window.display_support_lines,
         )
+        settings.set_current_appearance(window.distinct_reference_sequences)
+        settings.set_genus_options(window.genus_to_substances, window.global_genus_filter)
+        settings.set_family_options(window.family_to_substances, window.global_family_filter)
     color_map = {sid: sample['color'] for sid, sample in window.samples.items()}
     for slot in window.slots:
         slot.image_label.set_global_colors(color_map)

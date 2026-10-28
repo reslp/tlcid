@@ -71,10 +71,14 @@ class ReferenceRepository:
             return
 
         for genus, family, substance in rows:
-            if genus and substance:
-                bundle.genus_to_substances.setdefault(genus, set()).add(str(substance).lower())
-            if family and substance:
-                bundle.family_to_substances.setdefault(family, set()).add(str(substance).lower())
+            if genus:
+                substances = bundle.genus_to_substances.setdefault(genus, set())
+                if substance:
+                    substances.add(str(substance).lower())
+            if family:
+                substances = bundle.family_to_substances.setdefault(family, set())
+                if substance:
+                    substances.add(str(substance).lower())
 
         print(
             f"DEBUG: Loaded {len(bundle.genus_to_substances)} genera and "
