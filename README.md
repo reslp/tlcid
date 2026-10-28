@@ -17,11 +17,29 @@ TLCid is a desktop application for analyzing TLC (Thin Layer Chromatography) pla
 - **Substance prediction**: Match spots against a database of 800+ lichen substances
 - **Species prediction**: Identify lichen species based on substance profiles
 - **Visual filtering**: Filter predictions by genus, family, UV characteristics, and more
-- **Export**: Save annotated plate images and analysis state (JSON) and export whole analyses as PDFs
+- **Export**: Save annotated plate images, portable `.tlcid` analyses with embedded images, and PDF reports
 
 ## Installation
 
 Best, go to the release page and download the latest release. There is usually no need to build the project from source.
+
+## Usage
+
+<p align="center">
+  <img src="screenshot.png" alt="Screenshot" width="90%">
+</p>
+
+1. **Load plate images** using the "Load Image" buttons
+2. **Set reference lines**: Click and drag the green start/front lines to mark solvent boundaries
+3. **Mark reference standards** (optional): Use Atranorin/Norstictic acid spots for calibration
+4. **Add substance spots**: Click on the plate to mark spots
+5. **View predictions**: Results appear in the right panel with candidate substances
+6. **Refine matches**: Use the characteristics window to filter by genus, UV response, etc.
+7. **Predict species**: Use Analysis → Predict species to identify lichens from the substance profile
+8. **Save analyses**: File → Save Analysis creates a self-contained `.tlcid` archive containing settings, annotations, notes, and full-resolution, unannotated plate images. Move this file between computers without copying the original images.
+
+
+## Development
 
 ### Prerequisites
 
@@ -80,17 +98,4 @@ The bundle will be at `dist/linux/TLCid/`.
 - Docker must be running
 - Build artifacts are generated inside the container and written to the mounted project directory
 
-## Usage
-
-<p align="center">
-  <img src="screenshot.png" alt="Screenshot" width="90%">
-</p>
-
-1. **Load plate images** using the "Load Image" buttons
-2. **Set reference lines**: Click and drag the green start/front lines to mark solvent boundaries
-3. **Mark reference standards** (optional): Use Atranorin/Norstictic acid spots for calibration
-4. **Add substance spots**: Click on the plate to mark spots
-5. **View predictions**: Results appear in the right panel with candidate substances
-6. **Refine matches**: Use the characteristics window to filter by genus, UV response, etc.
-7. **Predict species**: Use Analysis → Predict species to identify lichens from the substance profile
 
